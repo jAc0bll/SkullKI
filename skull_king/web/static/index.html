@@ -1,0 +1,1717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skull King AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Cinzel+Decorative:wght@700&family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+/* ── Variables ───────────────────────────────────────────────────── */
+:root {
+  --bg:         #060b16;
+  --surface:    #0c1524;
+  --surface-2:  #111e30;
+  --surface-3:  #162540;
+  --border:     #1d3050;
+  --border-hi:  #2a4470;
+  --gold:       #c8973a;
+  --gold-light: #e8b84b;
+  --gold-glow:  rgba(200,151,58,0.18);
+  --text:       #c2b9aa;
+  --text-hi:    #e8e0d0;
+  --text-dim:   #506070;
+  --blue:       #3d7fbd;
+  --green:      #2d8a5a;
+  --red:        #8a3030;
+  --radius:     10px;
+  --font-head:  'Cinzel', Georgia, serif;
+  --font-body:  'EB Garamond', Georgia, serif;
+}
+
+/* ── Reset & Base ────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  font-size: 16px;
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse 90% 55% at 15% 25%, rgba(12,30,70,0.5) 0%, transparent 60%),
+    radial-gradient(ellipse 70% 60% at 85% 75%, rgba(8,20,55,0.35) 0%, transparent 55%),
+    radial-gradient(ellipse 120% 80% at 50% 115%, rgba(3,10,32,0.65) 0%, transparent 60%);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+button { cursor: pointer; border: none; font-family: var(--font-body); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+select, input[type=number] {
+  background: var(--surface-2);
+  color: var(--text-hi);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+}
+select:focus, input:focus { outline: 1px solid var(--gold); }
+
+/* ── Header ─────────────────────────────────────────────────────── */
+header {
+  background: rgba(6,11,22,0.96);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 28px;
+  height: 58px;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  gap: 0;
+}
+
+.logo {
+  font-family: 'Cinzel Decorative', var(--font-head);
+  font-size: 1.15rem;
+  color: var(--gold-light);
+  letter-spacing: 2px;
+  text-shadow: 0 0 24px rgba(232,184,75,0.28);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.logo-icon { font-size: 1.5rem; line-height: 1; }
+
+nav {
+  display: flex;
+  gap: 2px;
+  margin-left: 36px;
+  flex: 1;
+}
+
+nav button {
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  padding: 8px 18px;
+  font-family: var(--font-head);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-radius: 6px;
+  transition: color 0.18s, background 0.18s;
+}
+nav button:hover:not(.active) { color: var(--text); background: rgba(255,255,255,0.04); }
+nav button.active { color: var(--gold-light); background: var(--gold-glow); }
+
+/* ── Tab Panels ──────────────────────────────────────────────────── */
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ── Setup Screen ────────────────────────────────────────────────── */
+#setup-screen {
+  max-width: 520px;
+  margin: 56px auto;
+  padding: 36px 40px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.45);
+}
+
+#setup-screen h2 {
+  font-family: var(--font-head);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--gold-light);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 28px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.field { margin-bottom: 20px; }
+.field label {
+  display: block;
+  margin-bottom: 7px;
+  font-family: var(--font-head);
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+#opponent-slots { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.opp-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.88rem;
+  color: var(--text-dim);
+}
+.opp-row select { flex: 1; }
+.opp-label {
+  width: 90px;
+  flex-shrink: 0;
+  font-family: var(--font-head);
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+}
+
+#start-btn {
+  width: 100%;
+  padding: 13px;
+  margin-top: 10px;
+  background: var(--gold);
+  color: #080c12;
+  font-family: var(--font-head);
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  border-radius: 8px;
+  transition: background 0.18s, box-shadow 0.18s;
+}
+#start-btn:hover { background: var(--gold-light); box-shadow: 0 0 20px var(--gold-glow); }
+
+/* ── Game Screen ─────────────────────────────────────────────────── */
+#game-screen { padding: 18px 22px; max-width: 1120px; margin: 0 auto; }
+
+/* Status bar */
+#status-bar {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 18px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+}
+.status-item {
+  font-family: var(--font-head);
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.status-item strong { color: var(--text-hi); font-weight: 600; }
+
+#phase-badge {
+  padding: 3px 12px;
+  border-radius: 20px;
+  font-family: var(--font-head);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.phase-BIDDING { background: rgba(61,127,189,0.2); color: #7db8f0; border: 1px solid rgba(61,127,189,0.4); }
+.phase-PLAYING { background: rgba(45,138,90,0.2); color: #60d090; border: 1px solid rgba(45,138,90,0.4); }
+.phase-GAME_OVER { background: rgba(138,48,48,0.2); color: #f08080; border: 1px solid rgba(138,48,48,0.4); }
+
+#new-game-btn-small {
+  margin-left: auto;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-head);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  transition: color 0.18s, border-color 0.18s;
+}
+#new-game-btn-small:hover { color: var(--text); border-color: var(--border-hi); }
+
+/* Game layout */
+#game-layout { display: grid; grid-template-columns: 1fr 250px; gap: 16px; }
+#game-main { display: flex; flex-direction: column; gap: 14px; }
+
+/* Panel base */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+.panel-title {
+  font-family: var(--font-head);
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  margin-bottom: 14px;
+}
+
+/* Trick area */
+#trick-area { position: relative; min-height: 150px; }
+#trick-cards {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  perspective: 800px;
+}
+/* Subtle rotation for spread feel */
+#trick-cards > div:nth-child(1) { --rot: -3.5deg; }
+#trick-cards > div:nth-child(2) { --rot: 1.5deg; }
+#trick-cards > div:nth-child(3) { --rot: -2deg; }
+#trick-cards > div:nth-child(4) { --rot: 3deg; }
+#trick-cards > div:nth-child(5) { --rot: -1deg; }
+#trick-cards > div:nth-child(6) { --rot: 2.5deg; }
+#trick-cards > div { transform: rotate(var(--rot, 0deg)); }
+
+#trick-winner-overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius);
+  background: rgba(6,11,22,0.88);
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+#trick-winner-overlay.show { display: flex; }
+#trick-winner-text {
+  font-family: var(--font-head);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--gold-light);
+  text-align: center;
+  padding: 14px 28px;
+  border: 1px solid var(--gold);
+  border-radius: 8px;
+  background: rgba(200,151,58,0.06);
+  text-shadow: 0 0 20px var(--gold-glow);
+  letter-spacing: 0.06em;
+}
+
+/* Bid area */
+#bid-area { display: none; }
+#bid-area .panel-title { color: var(--gold); }
+#bid-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.bid-btn {
+  width: 48px;
+  height: 48px;
+  background: var(--surface-2);
+  color: var(--text-hi);
+  font-family: var(--font-head);
+  font-size: 1.05rem;
+  font-weight: 700;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  transition: background 0.18s, border-color 0.18s, box-shadow 0.18s;
+}
+.bid-btn:hover { background: var(--surface-3); border-color: var(--gold); box-shadow: 0 0 12px var(--gold-glow); }
+
+/* Hand area */
+#hand-area {}
+#hand-cards {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  perspective: 1000px;
+}
+
+/* ── Cards ───────────────────────────────────────────────────────── */
+.card {
+  position: relative;
+  width: 82px;
+  height: 115px;
+  border-radius: 9px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  cursor: default;
+  box-shadow: 0 3px 12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
+  transition: transform 0.22s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.22s ease;
+}
+.card-pip {
+  position: absolute;
+  font-family: var(--font-head);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.15;
+  text-align: center;
+}
+.card-pip.tl { top: 6px; left: 8px; }
+.card-pip.br { bottom: 6px; right: 8px; transform: rotate(180deg); }
+.card-center-sym {
+  font-size: 2.4rem;
+  line-height: 1;
+  opacity: 0.88;
+  margin-bottom: 2px;
+}
+.card-special-emoji { font-size: 2.3rem; line-height: 1; }
+.card-special-name {
+  font-family: var(--font-head);
+  font-size: 0.5rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-top: 6px;
+  text-align: center;
+  opacity: 0.85;
+  padding: 0 4px;
+}
+
+/* Suit colors */
+.suit-BLACK  { background: linear-gradient(145deg, #141e2e, #0d1421); color: #c8d8f8; border: 1px solid #253550; }
+.suit-YELLOW { background: linear-gradient(145deg, #2d1a05, #3d2408); color: #ffd060; border: 1px solid #5a3810; }
+.suit-GREEN  { background: linear-gradient(145deg, #091e0f, #0c2515); color: #50d080; border: 1px solid #1a3e25; }
+.suit-PURPLE { background: linear-gradient(145deg, #150928, #1c0e36); color: #c090f8; border: 1px solid #32205a; }
+
+/* Special card colors */
+.type-SKULL_KING {
+  background: linear-gradient(145deg, #180a10, #0f060e);
+  color: var(--gold-light);
+  border: 1px solid #5a2e00;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.65), 0 0 10px rgba(200,151,58,0.12), inset 0 1px 0 rgba(232,184,75,0.08);
+}
+.type-PIRATE  { background: linear-gradient(145deg, #2a0808, #1c0506); color: #f08080; border: 1px solid #5a1212; }
+.type-MERMAID { background: linear-gradient(145deg, #041828, #06203a); color: #60d8f8; border: 1px solid #0a3055; }
+.type-ESCAPE  { background: linear-gradient(145deg, #141c1e, #0e1416); color: #809098; border: 1px solid #202e34; }
+.type-TIGRESS { background: linear-gradient(145deg, #281405, #1e0e04); color: #f8b840; border: 1px solid #503010; }
+
+/* Card states */
+.card.legal { cursor: pointer; }
+.card.legal:hover {
+  transform: translateY(-16px) rotateX(7deg);
+  box-shadow: 0 22px 44px rgba(0,0,0,0.7), 0 0 18px rgba(200,151,58,0.14);
+  z-index: 10;
+}
+.card.selected {
+  transform: translateY(-18px) rotateX(7deg);
+  box-shadow: 0 22px 44px rgba(0,0,0,0.7), 0 0 0 2px var(--gold-light), 0 0 24px rgba(232,184,75,0.32);
+  z-index: 10;
+}
+.card.illegal { opacity: 0.28; }
+.card.trick-card { width: 74px; height: 104px; }
+.card.trick-card .card-pip { font-size: 0.63rem; }
+.card.trick-card .card-center-sym,
+.card.trick-card .card-special-emoji { font-size: 2rem; }
+.card.trick-card .card-special-name { font-size: 0.46rem; }
+
+/* ── Right Sidebar ───────────────────────────────────────────────── */
+#sidebar { display: flex; flex-direction: column; gap: 14px; }
+
+/* Scoreboard */
+#scoreboard {}
+#score-table { width: 100%; font-size: 0.82rem; border-collapse: collapse; }
+#score-table th {
+  font-family: var(--font-head);
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-align: left;
+  padding: 3px 6px 7px;
+  border-bottom: 1px solid var(--border);
+}
+#score-table td { padding: 5px 6px; color: var(--text); }
+#score-table tr.current-player td {
+  background: rgba(200,151,58,0.07);
+  color: var(--text-hi);
+}
+.score-name {
+  font-family: var(--font-head);
+  font-size: 0.75rem;
+  font-weight: 600;
+  max-width: 75px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.you-badge {
+  font-size: 0.6rem;
+  color: var(--gold);
+  margin-left: 4px;
+  font-family: var(--font-head);
+  letter-spacing: 0.05em;
+}
+
+/* Hint panel */
+#hint-btn {
+  width: 100%;
+  background: var(--surface-2);
+  color: var(--blue);
+  border: 1px solid rgba(61,127,189,0.35);
+  border-radius: 7px;
+  font-family: var(--font-head);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  margin-bottom: 12px;
+  transition: background 0.18s, border-color 0.18s;
+}
+#hint-btn:hover { background: rgba(61,127,189,0.12); border-color: var(--blue); }
+
+#hint-content { font-size: 0.82rem; color: var(--text-dim); line-height: 1.55; }
+#hint-content .reasoning { color: var(--text); margin-bottom: 10px; font-style: italic; }
+.card-weight-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(29,48,80,0.6);
+  gap: 8px;
+}
+.card-weight-row:last-child { border-bottom: none; }
+.weight-bar-bg { width: 54px; height: 5px; background: var(--surface-3); border-radius: 3px; overflow: hidden; flex-shrink: 0; }
+.weight-bar { height: 100%; background: var(--blue); border-radius: 3px; }
+.recommended-badge {
+  font-size: 0.6rem; background: rgba(45,138,90,0.25); color: #60d090;
+  padding: 1px 5px; border-radius: 3px; margin-left: 4px; font-family: var(--font-head);
+}
+.wins-badge {
+  font-size: 0.6rem; background: rgba(61,127,189,0.2); color: #7db8f0;
+  padding: 1px 5px; border-radius: 3px; margin-left: 4px; font-family: var(--font-head);
+}
+.loses-badge {
+  font-size: 0.6rem; background: rgba(138,48,48,0.2); color: #f08080;
+  padding: 1px 5px; border-radius: 3px; margin-left: 4px; font-family: var(--font-head);
+}
+
+/* Log */
+#log-list {
+  max-height: 115px;
+  overflow-y: auto;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.log-entry { color: var(--text-dim); font-style: italic; }
+.log-entry.you { color: #7db8f0; font-style: normal; }
+
+/* ── Game Over Banner ────────────────────────────────────────────── */
+#game-over-banner {
+  display: none;
+  background: var(--surface);
+  border: 1px solid var(--gold);
+  border-radius: 12px;
+  padding: 24px;
+  text-align: center;
+  margin-bottom: 16px;
+  box-shadow: 0 0 30px rgba(200,151,58,0.1);
+}
+#game-over-banner h2 {
+  font-family: var(--font-head);
+  color: var(--gold-light);
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+#game-over-banner p { color: var(--text); font-size: 1rem; }
+#play-again-btn {
+  background: var(--gold);
+  color: #080c12;
+  font-family: var(--font-head);
+  font-weight: 700;
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-radius: 7px;
+  padding: 11px 28px;
+  margin-top: 16px;
+  transition: background 0.18s;
+}
+#play-again-btn:hover { background: var(--gold-light); }
+
+/* ── Tigress Modal ───────────────────────────────────────────────── */
+#tigress-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.72);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+#tigress-modal.open { display: flex; }
+#tigress-inner {
+  background: var(--surface);
+  border: 1px solid #503010;
+  border-radius: 14px;
+  padding: 32px;
+  text-align: center;
+  max-width: 330px;
+  width: 90%;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+}
+#tigress-inner h2 {
+  font-family: var(--font-head);
+  color: #f8b840;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+#tigress-inner p { color: var(--text); font-size: 0.95rem; margin-bottom: 22px; }
+#tigress-choices { display: flex; gap: 14px; justify-content: center; }
+.tigress-btn {
+  padding: 12px 26px;
+  font-family: var(--font-head);
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: 7px;
+  transition: opacity 0.18s;
+}
+.tigress-btn:hover { opacity: 0.85; }
+#pirate-btn { background: #7f1d1d; color: #fca5a5; }
+#escape-btn { background: var(--surface-3); color: var(--text); border: 1px solid var(--border); }
+#tigress-cancel {
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  margin-top: 14px;
+  padding: 4px 8px;
+}
+#tigress-cancel:hover { color: var(--text); }
+
+/* ── Tournament Tab ──────────────────────────────────────────────── */
+#tournament-tab { max-width: 780px; margin: 36px auto; padding: 0 22px; }
+#tourn-setup {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 28px;
+  margin-bottom: 20px;
+}
+#tourn-setup h2 {
+  font-family: var(--font-head);
+  color: var(--gold-light);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 22px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.tourn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+#agent-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+.agent-row { display: flex; align-items: center; gap: 10px; }
+.agent-row label {
+  width: 28px;
+  font-family: var(--font-head);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: right;
+  flex-shrink: 0;
+}
+#run-tourn-btn {
+  background: var(--gold);
+  color: #080c12;
+  font-family: var(--font-head);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-radius: 7px;
+  padding: 11px 28px;
+  transition: background 0.18s;
+}
+#run-tourn-btn:hover { background: var(--gold-light); }
+#tourn-loading { display: none; color: var(--blue); font-size: 0.9rem; padding: 10px 0; }
+#tourn-results {
+  display: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 28px;
+}
+#tourn-results h2 {
+  font-family: var(--font-head);
+  color: var(--gold-light);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+#tourn-summary {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  background: var(--bg);
+  padding: 14px;
+  border-radius: 7px;
+  margin-bottom: 22px;
+  white-space: pre;
+  border: 1px solid var(--border);
+}
+.chart-section-label {
+  font-family: var(--font-head);
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin-bottom: 12px;
+}
+#tourn-chart { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
+.chart-row { display: flex; align-items: center; gap: 12px; }
+.chart-label { width: 120px; font-size: 0.8rem; color: var(--text-dim); text-align: right; flex-shrink: 0; font-family: var(--font-head); font-size: 0.72rem; }
+.chart-bar-bg {
+  flex: 1;
+  height: 28px;
+  background: var(--surface-2);
+  border-radius: 7px;
+  overflow: hidden;
+  position: relative;
+  border: 1px solid var(--border);
+}
+.chart-bar {
+  height: 100%;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  padding-left: 10px;
+  font-family: var(--font-head);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: rgba(0,0,0,0.7);
+  transition: width 0.6s cubic-bezier(0.4,0,0.2,1);
+}
+.chart-value {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  font-family: var(--font-head);
+}
+#round-chart { margin-top: 0; }
+#round-lines { display: flex; gap: 0; align-items: flex-end; height: 100px; border-bottom: 1px solid var(--border); }
+.round-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px; }
+.round-bar { width: 70%; border-radius: 3px 3px 0 0; min-height: 2px; }
+.round-num { font-size: 0.62rem; color: var(--text-dim); margin-top: 5px; font-family: var(--font-head); }
+
+/* ── Strategies Tab ──────────────────────────────────────────────── */
+#strategies-tab { max-width: 780px; margin: 36px auto; padding: 0 22px; }
+.strat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 22px 26px;
+  margin-bottom: 14px;
+  transition: border-color 0.18s;
+}
+.strat-card:hover { border-color: var(--border-hi); }
+.strat-card h2 {
+  font-family: var(--font-head);
+  color: var(--text-hi);
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.strat-card .badge {
+  display: inline-block;
+  font-family: var(--font-head);
+  font-size: 0.62rem;
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.badge-easy   { background: rgba(45,138,90,0.2); color: #60d090; border: 1px solid rgba(45,138,90,0.4); }
+.badge-medium { background: rgba(61,127,189,0.2); color: #7db8f0; border: 1px solid rgba(61,127,189,0.4); }
+.badge-hard   { background: rgba(138,48,138,0.2); color: #d090f8; border: 1px solid rgba(138,48,138,0.4); }
+.badge-ml     { background: rgba(200,151,58,0.15); color: var(--gold-light); border: 1px solid rgba(200,151,58,0.4); }
+.strat-card p { color: var(--text); font-size: 0.9rem; line-height: 1.65; }
+.weight-table { width: 100%; font-size: 0.82rem; border-collapse: collapse; margin-top: 14px; }
+.weight-table th {
+  font-family: var(--font-head);
+  font-size: 0.62rem;
+  color: var(--text-dim);
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.weight-table td { padding: 6px 8px; color: var(--text); border-bottom: 1px solid rgba(29,48,80,0.4); }
+.weight-table tr:last-child td { border-bottom: none; }
+
+/* ── Settings Tab ────────────────────────────────────────────────── */
+#settings-tab { max-width: 780px; margin: 36px auto; padding: 0 22px; }
+
+.settings-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 28px;
+  margin-bottom: 18px;
+}
+.settings-section h2 {
+  font-family: var(--font-head);
+  color: var(--gold-light);
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.active-model-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 0 16px;
+  border-bottom: 1px solid rgba(29,48,80,0.4);
+  margin-bottom: 20px;
+}
+.active-model-label {
+  font-family: var(--font-head);
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  flex-shrink: 0;
+}
+#active-model-display {
+  font-family: monospace;
+  font-size: 0.82rem;
+  color: var(--gold-light);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#reload-model-btn {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-head);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 7px 16px;
+  flex-shrink: 0;
+  transition: border-color 0.18s, color 0.18s;
+}
+#reload-model-btn:hover { border-color: var(--border-hi); color: var(--text-hi); }
+
+#model-list { display: flex; flex-direction: column; gap: 10px; }
+#settings-loading { color: var(--text-dim); font-style: italic; font-size: 0.9rem; }
+
+.model-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 14px 18px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.model-card.active-model {
+  border-color: var(--gold);
+  box-shadow: 0 0 16px rgba(200,151,58,0.1);
+}
+.model-card-icon {
+  font-size: 1.6rem;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.model-card-info { flex: 1; min-width: 0; }
+.model-card-name {
+  font-family: var(--font-head);
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-hi);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+.model-card-meta {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.model-card-meta span { margin-right: 14px; }
+.model-card-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.active-badge {
+  background: rgba(200,151,58,0.15);
+  color: var(--gold-light);
+  border: 1px solid rgba(200,151,58,0.4);
+  border-radius: 20px;
+  font-family: var(--font-head);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 12px;
+}
+.set-active-btn {
+  background: var(--surface-3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-head);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  transition: border-color 0.18s, color 0.18s, background 0.18s;
+}
+.set-active-btn:hover { border-color: var(--gold); color: var(--gold-light); background: var(--gold-glow); }
+
+/* ── Toasts ──────────────────────────────────────────────────────── */
+.toast {
+  display: none;
+  position: fixed;
+  bottom: 26px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 11px 22px;
+  border-radius: 8px;
+  font-family: var(--font-head);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  z-index: 200;
+  white-space: nowrap;
+}
+#error-toast { background: rgba(138,48,48,0.95); color: #fca5a5; border: 1px solid #7f1d1d; }
+#success-toast { background: rgba(45,138,90,0.95); color: #a7f3c5; border: 1px solid #1a5c3a; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <span class="logo-icon">💀</span>
+    Skull King&nbsp;<span style="color:var(--text-dim);font-size:0.9em;letter-spacing:1px">AI</span>
+  </div>
+  <nav>
+    <button class="active" onclick="switchTab('play')" data-tab="play">🎮 Play</button>
+    <button onclick="switchTab('tournament')" data-tab="tournament">🏆 Tournament</button>
+    <button onclick="switchTab('strategies')" data-tab="strategies">📊 Strategies</button>
+    <button onclick="switchTab('settings')" data-tab="settings">⚙ Settings</button>
+  </nav>
+</header>
+
+<!-- ═══════════════════════════════════════ PLAY TAB -->
+<div id="play-tab" class="tab-panel active">
+
+  <!-- Setup screen -->
+  <div id="setup-screen">
+    <h2>New Game</h2>
+
+    <div class="field">
+      <label>Players</label>
+      <select id="n-players" onchange="updateOpponentSlots()">
+        <option value="2">2 players</option>
+        <option value="3">3 players</option>
+        <option value="4" selected>4 players</option>
+        <option value="5">5 players</option>
+        <option value="6">6 players</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>Opponents</label>
+      <div id="opponent-slots"></div>
+    </div>
+
+    <div class="field">
+      <label>Seed</label>
+      <input type="number" id="game-seed" value="42" min="0" style="width:120px">
+    </div>
+
+    <button id="start-btn" onclick="startGame()">▶ Start Game</button>
+  </div>
+
+  <!-- Game screen -->
+  <div id="game-screen" style="display:none">
+    <div id="game-over-banner">
+      <h2>Game Over</h2>
+      <p id="winner-text"></p>
+      <button id="play-again-btn" onclick="resetToSetup()">Play Again</button>
+    </div>
+
+    <div id="status-bar">
+      <div class="status-item">Round <strong id="s-round">-</strong>/10</div>
+      <div class="status-item">Trick <strong id="s-trick">-</strong></div>
+      <div class="status-item"><span id="phase-badge">-</span></div>
+      <div class="status-item" id="s-turn-msg"></div>
+      <button id="new-game-btn-small" onclick="resetToSetup()">New Game</button>
+    </div>
+
+    <div id="game-layout">
+      <div id="game-main">
+
+        <div id="trick-area" class="panel">
+          <div class="panel-title">Current Trick</div>
+          <div id="trick-cards"></div>
+          <div id="trick-winner-overlay">
+            <div id="trick-winner-text"></div>
+          </div>
+        </div>
+
+        <div id="bid-area" class="panel">
+          <div class="panel-title">Place Your Bid — Round <span id="bid-round">-</span></div>
+          <div id="bid-buttons"></div>
+        </div>
+
+        <div id="hand-area" class="panel">
+          <div class="panel-title">Your Hand</div>
+          <div id="hand-cards"></div>
+        </div>
+
+        <div id="log-area" class="panel">
+          <div class="panel-title">Event Log</div>
+          <div id="log-list"></div>
+        </div>
+
+      </div>
+
+      <div id="sidebar">
+        <div id="scoreboard" class="panel">
+          <div class="panel-title">Scores</div>
+          <table id="score-table">
+            <thead><tr>
+              <th>Player</th><th>Bid</th><th>Won</th><th>Total</th>
+            </tr></thead>
+            <tbody id="score-body"></tbody>
+          </table>
+        </div>
+
+        <div id="hint-panel" class="panel">
+          <div class="panel-title">AI Hint</div>
+          <button id="hint-btn" onclick="loadHint()">💡 Get Hint</button>
+          <div id="hint-content"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════ TOURNAMENT TAB -->
+<div id="tournament-tab" class="tab-panel">
+  <div id="tourn-setup">
+    <h2>Tournament</h2>
+    <div class="tourn-grid">
+      <div class="field">
+        <label>Players</label>
+        <select id="t-n-players" onchange="updateAgentGrid()">
+          <option value="2">2</option><option value="3">3</option>
+          <option value="4" selected>4</option><option value="5">5</option><option value="6">6</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Games</label>
+        <input type="number" id="t-n-games" value="20" min="1" max="100" style="width:90px">
+      </div>
+    </div>
+    <div class="field">
+      <label>Agents</label>
+      <div id="agent-grid"></div>
+    </div>
+    <button id="run-tourn-btn" onclick="runTournament()">▶ Run Tournament</button>
+    <div id="tourn-loading">⏳ Running tournament…</div>
+  </div>
+
+  <div id="tourn-results">
+    <h2>Results</h2>
+    <div id="tourn-summary"></div>
+    <div class="chart-section-label">Win Rate</div>
+    <div id="tourn-chart"></div>
+    <div id="round-chart">
+      <div class="chart-section-label" style="margin-top:20px">Avg Score Delta per Round</div>
+      <div id="round-lines"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════ STRATEGIES TAB -->
+<div id="strategies-tab" class="tab-panel">
+
+  <div class="strat-card">
+    <h2>Random Agent</h2>
+    <span class="badge badge-easy">Easy</span>
+    <p>Bids and plays randomly within the legal move set. Useful as a baseline floor — any intelligent strategy should beat it. Despite being random, it still follows suit-must-follow rules.</p>
+  </div>
+
+  <div class="strat-card">
+    <h2>Heuristic Agent</h2>
+    <span class="badge badge-medium">Medium</span>
+    <p>Uses calibrated expected-win weights to bid, then plays with a want-to-win / want-to-lose decision tree. When following a trick, it plays the weakest winning card to conserve strong ones.</p>
+    <table class="weight-table">
+      <thead><tr><th>Card</th><th>Weight</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>💀 Skull King</td><td>0.95</td><td>Almost always wins, except vs Mermaids</td></tr>
+        <tr><td>🏴‍☠️ Pirate ×5</td><td>0.75</td><td>Beats all numbered; loses only to SK</td></tr>
+        <tr><td>🐯 Tigress</td><td>0.45</td><td>Average of Pirate (0.75) and Escape (0.00)</td></tr>
+        <tr><td>🧜 Mermaid ×2</td><td>0.25</td><td>Beats SK; loses to Pirate/Tigress-Pirate</td></tr>
+        <tr><td>♠ Black 14</td><td>0.75</td><td>Highest trump — strong but beatable</td></tr>
+        <tr><td>♠ Black 1</td><td>0.15</td><td>Lowest trump</td></tr>
+        <tr><td>🏳️ Escape ×5</td><td>0.00</td><td>Never wins — pure bid-0 tool</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="strat-card">
+    <h2>MCTS Agent</h2>
+    <span class="badge badge-hard">Strong</span>
+    <p>Determinization Monte Carlo Tree Search: for each legal action, runs N random game rollouts and picks the action with the highest average outcome. Uses perfect information during rollouts, which is a practical approximation for imperfect-information games. Slower but often stronger on complex decisions.</p>
+  </div>
+
+  <div class="strat-card">
+    <h2>PPO Agent (Trained AI)</h2>
+    <span class="badge badge-ml">ML</span>
+    <p>A neural network trained with Maskable PPO via self-play. Takes a 244-dimensional observation (hand, bids, trick history, scores) and outputs a probability distribution over all legal actions. The model improves the longer you train it — use the Settings tab to switch between checkpoints.</p>
+    <table class="weight-table">
+      <thead><tr><th>Training Metric</th><th>What Improving Looks Like</th></tr></thead>
+      <tbody>
+        <tr><td>win_rate_vs_random</td><td>Rising above 0.25 (random baseline in 4P)</td></tr>
+        <tr><td>win_rate_vs_heuristic</td><td>Rising above 0.25</td></tr>
+        <tr><td>bid_accuracy</td><td>Fraction of rounds where bid == tricks won</td></tr>
+        <tr><td>mean_episode_reward</td><td>Steady upward trend</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="strat-card">
+    <h2>Reward Modes</h2>
+    <span class="badge badge-ml">RL Config</span>
+    <p>
+      <strong style="color:var(--text-hi)">sparse</strong> — +score only at game end. Clean signal, slow to converge.<br><br>
+      <strong style="color:var(--text-hi)">round</strong> — score delta at each round end. Balances clarity with frequency.<br><br>
+      <strong style="color:var(--text-hi)">shaped</strong> — additional per-trick signals conditioned on current bid. Bid=0: −0.10 per trick won. Bid>0, on-track: +0.03. Bid>0, overshot: −0.07.
+    </p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════ SETTINGS TAB -->
+<div id="settings-tab" class="tab-panel">
+
+  <div class="settings-section">
+    <h2>Active Model</h2>
+    <div class="active-model-row">
+      <span class="active-model-label">Path</span>
+      <span id="active-model-display">—</span>
+      <button id="reload-model-btn" onclick="reloadModel()">↻ Reload</button>
+    </div>
+    <div id="settings-loading" style="display:none">Loading models…</div>
+    <div id="model-list"></div>
+  </div>
+
+</div>
+
+<!-- Tigress modal -->
+<div id="tigress-modal">
+  <div id="tigress-inner">
+    <h2>🐯 Tigress</h2>
+    <p>How will you play the Tigress?</p>
+    <div id="tigress-choices">
+      <button id="pirate-btn" class="tigress-btn" onclick="chooseTigress('PIRATE')">🏴‍☠️ As Pirate</button>
+      <button id="escape-btn" class="tigress-btn" onclick="chooseTigress('ESCAPE')">🏳️ As Escape</button>
+    </div>
+    <br>
+    <button id="tigress-cancel" onclick="cancelTigress()">Cancel</button>
+  </div>
+</div>
+
+<!-- Toasts -->
+<div id="error-toast" class="toast"></div>
+<div id="success-toast" class="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════ STATE
+let sid = null;
+let gs = null;
+let pendingCard = null;
+let isAnimating = false;
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ═══════════════════════════════════════════════════ TABS
+function switchTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById(name + '-tab').classList.add('active');
+  event.target.classList.add('active');
+  if (name === 'settings') loadSettings();
+}
+
+// ═══════════════════════════════════════════════════ SETUP
+function updateOpponentSlots() {
+  const n = parseInt(document.getElementById('n-players').value);
+  const container = document.getElementById('opponent-slots');
+  container.innerHTML = '';
+  for (let i = 1; i < n; i++) {
+    const row = document.createElement('div');
+    row.className = 'opp-row';
+    row.innerHTML = `<span class="opp-label">Opponent ${i}</span>
+      <select id="opp-${i}">
+        <option value="heuristic">Heuristic</option>
+        <option value="random">Random</option>
+        <option value="mcts">MCTS (slow)</option>
+        <option value="ppo">PPO (trained AI)</option>
+      </select>`;
+    container.appendChild(row);
+  }
+}
+
+async function startGame() {
+  const n = parseInt(document.getElementById('n-players').value);
+  const seed = parseInt(document.getElementById('game-seed').value) || 42;
+  const oppTypes = [];
+  for (let i = 1; i < n; i++) oppTypes.push(document.getElementById('opp-' + i).value);
+  const body = { n_players: n, human_seat: 0, opponent_types: oppTypes, seed };
+  try {
+    const resp = await post('/api/game', body);
+    sid = resp.session_id;
+    gs = resp;
+    document.getElementById('setup-screen').style.display = 'none';
+    document.getElementById('game-screen').style.display = 'block';
+    updateDisplay(resp);
+  } catch(e) { showError(e.message); }
+}
+
+function resetToSetup() {
+  if (sid) { fetch('/api/game/' + sid, { method: 'DELETE' }); sid = null; }
+  gs = null;
+  document.getElementById('game-screen').style.display = 'none';
+  document.getElementById('game-over-banner').style.display = 'none';
+  document.getElementById('setup-screen').style.display = 'block';
+  document.getElementById('hint-content').innerHTML = '';
+}
+
+// ═══════════════════════════════════════════════════ DISPLAY
+const SUIT_SYMBOL = { BLACK: '♠', YELLOW: '★', GREEN: '♣', PURPLE: '♦' };
+const SUIT_COLORS = { BLACK:'suit-BLACK', YELLOW:'suit-YELLOW', GREEN:'suit-GREEN', PURPLE:'suit-PURPLE' };
+const TYPE_COLORS = { SKULL_KING:'type-SKULL_KING', PIRATE:'type-PIRATE', MERMAID:'type-MERMAID', ESCAPE:'type-ESCAPE', TIGRESS:'type-TIGRESS' };
+
+function cardClass(card) {
+  if (card.type === 'NUMBERED') return SUIT_COLORS[card.suit] || '';
+  return TYPE_COLORS[card.type] || '';
+}
+
+function cardHtml(card, classes = '', onclick = '') {
+  const colorClass = cardClass(card);
+  const oc = onclick ? `onclick="${onclick}"` : '';
+  let inner = '';
+  if (card.type === 'NUMBERED') {
+    const sym = SUIT_SYMBOL[card.suit] || card.suit[0];
+    inner = `<div class="card-pip tl">${card.value}<br>${sym}</div>
+             <div class="card-center-sym">${sym}</div>
+             <div class="card-pip br">${card.value}<br>${sym}</div>`;
+  } else {
+    inner = `<div class="card-special-emoji">${card.emoji}</div>
+             <div class="card-special-name">${card.display}</div>`;
+  }
+  return `<div class="card ${colorClass} ${classes}" ${oc}>${inner}</div>`;
+}
+
+function renderTrick(cards) {
+  const trickEl = document.getElementById('trick-cards');
+  if (!cards || cards.length === 0) {
+    trickEl.innerHTML = '<span style="color:var(--text-dim);font-size:0.82rem;font-style:italic">No cards played yet</span>';
+  } else {
+    trickEl.innerHTML = cards.map(tc => {
+      const modeStr = tc.tigress_mode ? `<span style="font-size:0.62rem;color:#f8b840;font-style:italic"> ${tc.tigress_mode}</span>` : '';
+      const nameStr = `<div style="font-family:var(--font-head);font-size:0.6rem;color:var(--text-dim);margin-top:6px;text-align:center;letter-spacing:0.05em">${tc.player_name}${modeStr}</div>`;
+      return `<div style="display:flex;flex-direction:column;align-items:center">
+        ${cardHtml(tc.card, 'trick-card')}${nameStr}
+      </div>`;
+    }).join('');
+  }
+}
+
+function showTrickWinner(name) {
+  document.getElementById('trick-winner-text').textContent = `${name} wins the trick!`;
+  document.getElementById('trick-winner-overlay').classList.add('show');
+}
+
+function hideTrickWinner() {
+  document.getElementById('trick-winner-overlay').classList.remove('show');
+}
+
+async function animateAndUpdate(finalState) {
+  const events = finalState.events || [];
+  isAnimating = true;
+
+  let displayedTrick = gs && gs.current_trick ? [...gs.current_trick] : [];
+
+  for (const evt of events) {
+    if (evt.type === 'play') {
+      displayedTrick.push({ card: evt.card, player_name: evt.player_name, tigress_mode: evt.tigress_mode, seat: evt.seat });
+      renderTrick(displayedTrick);
+      if (evt.seat !== finalState.human_seat) await sleep(750);
+    } else if (evt.type === 'trick_won') {
+      showTrickWinner(evt.winner_name);
+      await sleep(1200);
+      hideTrickWinner();
+      displayedTrick = [];
+      renderTrick([]);
+      await sleep(300);
+    } else if (evt.type === 'round_end') {
+      await sleep(600);
+    }
+  }
+
+  isAnimating = false;
+  updateDisplay(finalState);
+}
+
+function updateDisplay(state) {
+  gs = state;
+  document.getElementById('s-round').textContent = state.round_number;
+  document.getElementById('s-trick').textContent = state.trick_number;
+  const badge = document.getElementById('phase-badge');
+  badge.textContent = state.phase;
+  badge.className = 'phase-' + state.phase;
+
+  const turnMsg = document.getElementById('s-turn-msg');
+  if (state.game_over) {
+    turnMsg.textContent = '';
+  } else if (state.is_human_turn) {
+    turnMsg.innerHTML = '<span style="color:#60d090;font-weight:600">Your turn</span>';
+  } else {
+    const name = state.player_states[state.current_player_seat]?.name || 'AI';
+    turnMsg.innerHTML = `<span style="color:var(--text-dim)">${name}'s turn…</span>`;
+  }
+
+  if (state.game_over) {
+    document.getElementById('game-over-banner').style.display = 'block';
+    document.getElementById('winner-text').textContent = state.winner ? `Winner: ${state.winner}` : 'Game complete!';
+  } else {
+    document.getElementById('game-over-banner').style.display = 'none';
+  }
+
+  // Scoreboard
+  const tbody = document.getElementById('score-body');
+  tbody.innerHTML = '';
+  for (const ps of state.player_states) {
+    const tr = document.createElement('tr');
+    if (ps.is_current) tr.className = 'current-player';
+    const youBadge = ps.is_human ? '<span class="you-badge">you</span>' : '';
+    const bidStr = ps.bid !== null && ps.bid !== undefined ? ps.bid : '?';
+    tr.innerHTML = `
+      <td class="score-name">${ps.name}${youBadge}</td>
+      <td>${bidStr}</td>
+      <td>${ps.tricks_won}</td>
+      <td>${ps.total_score}</td>`;
+    tbody.appendChild(tr);
+  }
+
+  renderTrick(state.current_trick);
+
+  const bidArea = document.getElementById('bid-area');
+  if (state.phase === 'BIDDING' && state.is_human_turn && state.legal_bids.length > 0) {
+    bidArea.style.display = 'block';
+    document.getElementById('bid-round').textContent = state.round_number;
+    const bb = document.getElementById('bid-buttons');
+    bb.innerHTML = '';
+    for (const b of state.legal_bids) {
+      const btn = document.createElement('button');
+      btn.className = 'bid-btn';
+      btn.textContent = b;
+      btn.onclick = () => submitBid(b);
+      bb.appendChild(btn);
+    }
+  } else {
+    bidArea.style.display = 'none';
+  }
+
+  const handEl = document.getElementById('hand-cards');
+  const ps0 = state.player_states[state.human_seat];
+  const hand = ps0 ? ps0.hand : [];
+
+  if (hand.length === 0) {
+    handEl.innerHTML = '<span style="color:var(--text-dim);font-size:0.85rem;font-style:italic">No cards in hand</span>';
+  } else {
+    const legalKeys = new Set((state.legal_cards || []).map(c => cardKey(c)));
+    handEl.innerHTML = hand.map(card => {
+      const isLegal = state.phase === 'PLAYING' && state.is_human_turn && legalKeys.has(cardKey(card));
+      const cls = isLegal ? 'legal' : (state.phase === 'PLAYING' && state.is_human_turn ? 'illegal' : '');
+      const oc = isLegal ? `handleCardClick(this)` : '';
+      return `<div data-card='${JSON.stringify(card)}' style="display:inline-block">
+        ${cardHtml(card, cls, oc)}
+      </div>`;
+    }).join('');
+  }
+
+  bindCardClicks();
+
+  const logEl = document.getElementById('log-list');
+  logEl.innerHTML = (state.log || []).map(msg => {
+    const isYou = msg.startsWith('You');
+    return `<div class="log-entry${isYou ? ' you' : ''}">${msg}</div>`;
+  }).join('');
+  logEl.scrollTop = logEl.scrollHeight;
+
+  document.getElementById('hint-content').innerHTML = '';
+}
+
+function cardKey(card) {
+  return `${card.type}|${card.suit}|${card.value}`;
+}
+
+function bindCardClicks() {
+  const hand = document.getElementById('hand-cards');
+  hand.querySelectorAll('.card.legal').forEach(el => {
+    const wrapper = el.closest('[data-card]');
+    if (wrapper) {
+      el.onclick = () => handleCardClick(JSON.parse(wrapper.dataset.card));
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════ ACTIONS
+async function submitBid(n) {
+  if (isAnimating) return;
+  try {
+    const resp = await post(`/api/game/${sid}/bid`, { bid: n });
+    updateDisplay(resp);
+  } catch(e) { showError(e.message); }
+}
+
+function handleCardClick(card) {
+  if (isAnimating || !gs || !gs.is_human_turn || gs.phase !== 'PLAYING') return;
+  if (card.type === 'TIGRESS') {
+    pendingCard = card;
+    document.getElementById('tigress-modal').classList.add('open');
+  } else {
+    submitPlay(card, null);
+  }
+}
+
+async function chooseTigress(mode) {
+  document.getElementById('tigress-modal').classList.remove('open');
+  if (pendingCard) {
+    await submitPlay(pendingCard, mode);
+    pendingCard = null;
+  }
+}
+
+function cancelTigress() {
+  document.getElementById('tigress-modal').classList.remove('open');
+  pendingCard = null;
+}
+
+async function submitPlay(card, tigressMode) {
+  if (isAnimating) return;
+  document.querySelectorAll('#hand-cards [data-card]').forEach(wrapper => {
+    try {
+      const c = JSON.parse(wrapper.dataset.card);
+      if (cardKey(c) === cardKey(card)) wrapper.remove();
+    } catch(_) {}
+  });
+  try {
+    const resp = await post(`/api/game/${sid}/play`, { card, tigress_mode: tigressMode });
+    await animateAndUpdate(resp);
+  } catch(e) {
+    isAnimating = false;
+    showError(e.message);
+  }
+}
+
+// ═══════════════════════════════════════════════════ HINT
+async function loadHint() {
+  if (!sid) return;
+  const btn = document.getElementById('hint-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Thinking…';
+  try {
+    const hint = await get(`/api/game/${sid}/hint`);
+    renderHint(hint);
+  } catch(e) { showError(e.message); }
+  btn.disabled = false;
+  btn.textContent = '💡 Get Hint';
+}
+
+function renderHint(hint) {
+  const el = document.getElementById('hint-content');
+
+  if (hint.phase === 'GAME_OVER' || !hint.phase) {
+    el.innerHTML = `<div class="reasoning">${hint.reasoning}</div>`;
+    return;
+  }
+
+  if (hint.phase === 'BIDDING') {
+    const rows = (hint.card_weights || []).map(cw => {
+      const pct = Math.round(cw.weight * 100);
+      return `<div class="card-weight-row">
+        <span>${cw.card.emoji} ${cw.card.display}</span>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div class="weight-bar-bg"><div class="weight-bar" style="width:${pct}%"></div></div>
+          <span style="color:var(--text-hi);font-size:0.74rem;width:28px;text-align:right">${cw.weight}</span>
+        </div>
+      </div>`;
+    }).join('');
+    el.innerHTML = `
+      <div class="reasoning">${hint.reasoning}</div>
+      <div style="font-family:var(--font-head);font-weight:700;color:var(--blue);margin-bottom:8px;font-size:0.78rem">
+        Recommended: <span style="font-size:1rem;color:var(--text-hi)">${hint.recommended_bid}</span>
+        <span style="color:var(--text-dim)"> (sum ${hint.weight_total})</span>
+      </div>
+      ${rows}`;
+    return;
+  }
+
+  if (hint.phase === 'PLAYING') {
+    const rec = hint.recommended;
+    const modeStr = rec.tigress_mode ? ` (${rec.tigress_mode})` : '';
+    const statusColor = hint.want_to_win ? '#60d090' : '#f08080';
+    const statusText = hint.want_to_win ? `Need ${hint.tricks_needed} more trick(s)` : `Bid met — avoid winning`;
+
+    const rows = (hint.card_analysis || []).map(ca => {
+      const mStr = ca.tigress_mode ? ` (${ca.tigress_mode})` : '';
+      let badges = '';
+      if (ca.is_recommended) badges += '<span class="recommended-badge">✓ REC</span>';
+      if (ca.would_win === true) badges += '<span class="wins-badge">WINS</span>';
+      if (ca.would_win === false) badges += '<span class="loses-badge">LOSES</span>';
+      return `<div class="card-weight-row">
+        <span>${ca.card.emoji} ${ca.card.display}${mStr}${badges}</span>
+        <span style="color:var(--text-dim);font-size:0.72rem">${ca.strength}</span>
+      </div>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div class="reasoning">${hint.reasoning}</div>
+      <div style="color:${statusColor};font-family:var(--font-head);font-size:0.7rem;letter-spacing:0.05em;margin-bottom:8px">
+        Bid ${hint.bid}, won ${hint.tricks_won} — ${statusText}
+      </div>
+      <div style="font-family:var(--font-head);font-weight:700;color:var(--blue);font-size:0.75rem;margin-bottom:8px">
+        Play: ${rec.card.emoji} ${rec.card.display}${modeStr}
+      </div>
+      ${rows}`;
+  }
+}
+
+// ═══════════════════════════════════════════════════ TOURNAMENT
+function updateAgentGrid() {
+  const n = parseInt(document.getElementById('t-n-players').value);
+  const grid = document.getElementById('agent-grid');
+  grid.innerHTML = '';
+  const colors = ['#e8b84b','#7db8f0','#60d090','#f08080','#c090f8','#ffd060'];
+  for (let i = 0; i < n; i++) {
+    const row = document.createElement('div');
+    row.className = 'agent-row';
+    row.innerHTML = `<label style="color:${colors[i]}">P${i}</label>
+      <select id="t-agent-${i}">
+        <option value="heuristic">Heuristic</option>
+        <option value="random">Random</option>
+        <option value="mcts">MCTS</option>
+        <option value="ppo">PPO (trained AI)</option>
+      </select>`;
+    grid.appendChild(row);
+  }
+}
+
+async function runTournament() {
+  const n = parseInt(document.getElementById('t-n-players').value);
+  const nGames = parseInt(document.getElementById('t-n-games').value) || 20;
+  const agents = [];
+  for (let i = 0; i < n; i++) agents.push(document.getElementById('t-agent-' + i).value);
+
+  document.getElementById('tourn-loading').style.display = 'block';
+  document.getElementById('tourn-results').style.display = 'none';
+  document.getElementById('run-tourn-btn').disabled = true;
+
+  try {
+    const res = await post('/api/tournament', { n_players: n, agents, n_games: nGames, seed: 42 });
+    renderTournamentResults(res);
+  } catch(e) { showError(e.message); }
+
+  document.getElementById('tourn-loading').style.display = 'none';
+  document.getElementById('run-tourn-btn').disabled = false;
+}
+
+function renderTournamentResults(res) {
+  document.getElementById('tourn-results').style.display = 'block';
+  document.getElementById('tourn-summary').textContent = res.summary;
+
+  const colors = ['#e8b84b','#7db8f0','#60d090','#f08080','#c090f8','#ffd060'];
+  const names = res.agent_names;
+  const wr = res.win_rates;
+  const maxWR = Math.max(...names.map(n => wr[n] || 0)) || 1;
+
+  const chart = document.getElementById('tourn-chart');
+  chart.innerHTML = names.map((name, i) => {
+    const pct = ((wr[name] || 0) * 100).toFixed(1);
+    const barW = Math.round(((wr[name] || 0) / maxWR) * 100);
+    return `<div class="chart-row">
+      <div class="chart-label">${name}</div>
+      <div class="chart-bar-bg">
+        <div class="chart-bar" style="width:${barW}%;background:${colors[i]}">${pct}%</div>
+        <span class="chart-value">avg ${res.avg_scores[name]}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  const roundData = res.per_round_avg;
+  const allVals = names.flatMap(n => roundData[n] || []);
+  const maxV = Math.max(...allVals.map(Math.abs)) || 1;
+
+  const lines = document.getElementById('round-lines');
+  lines.innerHTML = '';
+  for (let r = 0; r < 10; r++) {
+    const col = document.createElement('div');
+    col.className = 'round-col';
+    names.forEach((name, i) => {
+      const v = (roundData[name] || [])[r] || 0;
+      const h = Math.max(2, Math.round((Math.abs(v) / maxV) * 80));
+      const bg = v >= 0 ? colors[i] : '#5a1212';
+      const bar = document.createElement('div');
+      bar.className = 'round-bar';
+      bar.style.cssText = `height:${h}px;background:${bg};opacity:0.85;`;
+      bar.title = `${name} R${r+1}: ${v}`;
+      col.appendChild(bar);
+    });
+    const lbl = document.createElement('div');
+    lbl.className = 'round-num';
+    lbl.textContent = r + 1;
+    col.appendChild(lbl);
+    lines.appendChild(col);
+  }
+}
+
+// ═══════════════════════════════════════════════════ SETTINGS
+async function loadSettings() {
+  document.getElementById('settings-loading').style.display = 'block';
+  document.getElementById('model-list').innerHTML = '';
+  try {
+    const [settings, modelsResp] = await Promise.all([
+      get('/api/settings'),
+      get('/api/models'),
+    ]);
+    renderSettings(settings, modelsResp.models || []);
+  } catch(e) {
+    document.getElementById('settings-loading').style.display = 'none';
+    showError('Could not load settings: ' + e.message);
+  }
+}
+
+function renderSettings(settings, models) {
+  document.getElementById('settings-loading').style.display = 'none';
+  // Show just filename for readability
+  const activeName = settings.active_model.split(/[/\\]/).pop();
+  document.getElementById('active-model-display').textContent = activeName;
+  document.getElementById('active-model-display').title = settings.active_model;
+
+  const list = document.getElementById('model-list');
+  if (models.length === 0) {
+    list.innerHTML = '<div style="color:var(--text-dim);font-style:italic;font-size:0.88rem">No model files found in models/skull_king/</div>';
+    return;
+  }
+
+  list.innerHTML = models.map(m => {
+    const isActive = m.is_active;
+    const pathEsc = m.path.replace(/'/g, "\\'");
+    return `<div class="model-card ${isActive ? 'active-model' : ''}">
+      <div class="model-card-icon">${isActive ? '⚡' : '🧠'}</div>
+      <div class="model-card-info">
+        <div class="model-card-name">${m.name}</div>
+        <div class="model-card-meta">
+          <span>${m.size_mb} MB</span>
+          <span>${m.created_at}</span>
+        </div>
+      </div>
+      <div class="model-card-actions">
+        ${isActive
+          ? `<span class="active-badge">Active</span>`
+          : `<button class="set-active-btn" onclick="setActiveModel('${pathEsc}')">Set Active</button>`
+        }
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function setActiveModel(path) {
+  try {
+    await post('/api/settings', { active_model: path });
+    showSuccess('Model updated — will be used in the next game.');
+    loadSettings();
+  } catch(e) { showError(e.message); }
+}
+
+async function reloadModel() {
+  try {
+    await post('/api/settings/reload', {});
+    showSuccess('Model cache cleared.');
+  } catch(e) { showError(e.message); }
+}
+
+// ═══════════════════════════════════════════════════ UTILS
+async function get(url) {
+  const r = await fetch(url);
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body.detail || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
+async function post(url, body) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const body2 = await r.json().catch(() => ({}));
+    throw new Error(body2.detail || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
+function showError(msg) {
+  const t = document.getElementById('error-toast');
+  t.textContent = '⚠ ' + msg;
+  t.style.display = 'block';
+  setTimeout(() => { t.style.display = 'none'; }, 4000);
+}
+
+function showSuccess(msg) {
+  const t = document.getElementById('success-toast');
+  t.textContent = '✓ ' + msg;
+  t.style.display = 'block';
+  setTimeout(() => { t.style.display = 'none'; }, 3000);
+}
+
+// ═══════════════════════════════════════════════════ INIT
+updateOpponentSlots();
+updateAgentGrid();
+</script>
+</body>
+</html>
