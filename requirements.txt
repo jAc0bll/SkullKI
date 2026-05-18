@@ -21,6 +21,7 @@ PyYAML>=6.0
 matplotlib>=3.7
 tensorboard>=2.14
 tqdm>=4.66
+rich>=13.0
 
 # ── Web interface ─────────────────────────────────────────────────────────────
 fastapi>=0.100
