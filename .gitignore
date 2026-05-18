@@ -14,7 +14,7 @@ build/
 # ── Virtual environments ───────────────────────────────────────────────────────
 .venv/
 venv/
-env/
+/env/
 .env
 
 # ── Trained model files (large — use Git LFS or transfer manually) ─────────────
