@@ -1,9 +1,12 @@
 # Skull King RL Training — Server Config (34 cores / 54 threads)
 # Run: python -m skull_king.training.train --config server_config.yaml
 #
-# Optimised for a high-core-count server.
-# SubprocVecEnv maps each env to its own OS process — true CPU parallelism.
-# Expected runtime at 20M steps with n_envs=48: ~8-12h
+# Key differences from local config:
+#   n_envs: 34          — one process per physical core (no context-switch overhead)
+#   torch.set_num_threads(1) — set in train.py to prevent thread oversubscription
+#   self_play_update_freq: 250_000 — less frequent IPC (model serialisation is expensive)
+#   batch_size: 1024    — larger batch exploits the bigger rollout buffer
+#   total_timesteps: 20_000_000
 
 # -- Environment --------------------------------------------------------------
 n_players: 4
@@ -17,15 +20,20 @@ curriculum_end_mix:   0.08
 heuristic_mix: 0.80
 
 # -- Training loop ------------------------------------------------------------
-total_timesteps: 20_000_000   # 2x vs local — server makes this feasible in ~10h
-n_envs: 48                    # ~1 process per physical thread; leave 6 threads for OS/model
+total_timesteps: 20_000_000
 
-# Rollout buffer: 2048 * 48 = 98 304 steps — covers ~120 full rounds per update.
-# Larger buffer = better gradient estimates, slower updates (which is fine on fast server).
-self_play_update_freq: 50_000  # scale with n_envs: more envs → more data between updates
+# n_envs = physical core count. More envs than cores causes context-switch
+# overhead that kills throughput. 34 physical cores → n_envs=34.
+n_envs: 34
+
+# Rollout buffer per update: 2048 × 34 = 69 632 steps (~85 full rounds).
+# self_play_update_freq must be >> n_steps to avoid sending the model (~3 MB)
+# to all 34 subprocesses every rollout — that IPC overhead dominates otherwise.
+self_play_update_freq: 250_000
+
 eval_freq: 200_000
 n_eval_episodes: 50
-n_eval_games: 100              # more eval games → more reliable metrics
+n_eval_games: 100
 checkpoint_freq: 1_000_000
 
 # Output directories
@@ -34,11 +42,9 @@ model_dir: models/skull_king
 run_name: ppo_v3_server
 
 # -- PPO Hyperparameters ------------------------------------------------------
-# Larger n_envs means more diverse experience per rollout.
-# We can afford a bigger batch_size because we have more data per update.
-learning_rate: 2.0e-4    # slightly lower than local — more stable with bigger batches
+learning_rate: 2.0e-4
 n_steps: 2048
-batch_size: 1024          # bigger batch exploits the larger rollout buffer
+batch_size: 1024
 n_epochs: 10
 gamma: 0.997
 gae_lambda: 0.95

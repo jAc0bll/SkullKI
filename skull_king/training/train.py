@@ -136,12 +136,18 @@ def train(config_path: str = "training_config.yaml") -> MaskablePPO:
     # if subprocess spawning fails (e.g. some Windows + Python version combos).
     def _make_env(idx: int):
         def _inner():
+            # Each env runs in its own subprocess. PyTorch defaults to using
+            # multiple threads per process (via OpenMP/MKL). With 34+ subprocesses
+            # this causes severe thread oversubscription — set to 1 thread so each
+            # process uses exactly one core for opponent neural net inference.
+            import torch
+            torch.set_num_threads(1)
             return SelfPlaySkullKingEnv(
                 n_players=cfg.n_players,
                 controlled_player=cfg.controlled_player,
                 reward_mode=cfg.reward_mode,
                 seed=cfg.env_seed + idx,
-                heuristic_mix=cfg.curriculum_start_mix,  # curriculum takes over from here
+                heuristic_mix=cfg.curriculum_start_mix,
             )
         return _inner
 
