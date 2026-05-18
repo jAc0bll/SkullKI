@@ -17,8 +17,9 @@ sb3-contrib>=2.3
 # ── Config ────────────────────────────────────────────────────────────────────
 PyYAML>=6.0
 
-# ── Visualization (tournament plots) ─────────────────────────────────────────
+# ── Visualization (tournament plots + TensorBoard training monitor) ───────────
 matplotlib>=3.7
+tensorboard>=2.14
 
 # ── Web interface ─────────────────────────────────────────────────────────────
 fastapi>=0.100
