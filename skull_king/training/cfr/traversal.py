@@ -70,6 +70,10 @@ _STRAT_WEIGHTS: dict = {}
 
 def worker_init(adv_weights: dict, strat_weights: dict) -> None:
     """Called once per worker process to cache network weights."""
+    import torch
+    # After fork(), only the calling thread survives → MKL/OpenMP pools are dead.
+    # Force single-threaded torch to avoid deadlock on any linear layer call.
+    torch.set_num_threads(1)
     global _ADV_WEIGHTS, _STRAT_WEIGHTS
     _ADV_WEIGHTS = adv_weights
     _STRAT_WEIGHTS = strat_weights
