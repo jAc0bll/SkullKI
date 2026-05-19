@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 import torch.nn as nn
+from tqdm import tqdm
 
 from skull_king.agents import HeuristicAgent, RandomAgent
 from skull_king.tournament.runner import TournamentRunner
@@ -65,29 +66,35 @@ class DeepCFRTrainer:
         print(f"  device: {self.device}")
         print(f"{'='*66}\n")
 
-        for t in range(1, cfg.n_cfr_iterations + 1):
+        iter_bar = tqdm(
+            range(1, cfg.n_cfr_iterations + 1),
+            desc="CFR",
+            unit="iter",
+            dynamic_ncols=True,
+        )
+        for t in iter_bar:
             t0 = time.time()
 
-            self._collect(t)
+            self._collect(t, iter_bar)
             adv_loss = self._train_adv()
             strat_loss = self._train_strat()
 
             elapsed = time.time() - t0
-            print(
-                f"[iter {t:4d}/{cfg.n_cfr_iterations}]  "
-                f"adv={adv_loss:.4f}  strat={strat_loss:.4f}  "
-                f"adv_buf={len(self.adv_buf):,}  "
-                f"strat_buf={len(self.strat_buf):,}  "
-                f"({elapsed:.1f}s)"
+            iter_bar.set_postfix(
+                adv=f"{adv_loss:.4f}",
+                strat=f"{strat_loss:.4f}",
+                adv_buf=f"{len(self.adv_buf):,}",
+                s=f"{elapsed:.1f}s",
             )
 
             if t % cfg.eval_every_n_iters == 0:
-                self._evaluate(t)
+                iter_bar.write(f"")
+                self._evaluate(t, iter_bar)
 
             if t % cfg.checkpoint_every_n_iters == 0:
                 path = os.path.join(cfg.model_dir, f"{cfg.run_name}_iter{t}")
                 self._save(path)
-                print(f"  [Checkpoint] → {path}_{{adv,strat}}.pt")
+                iter_bar.write(f"  [Checkpoint] → {path}_{{adv,strat}}.pt")
 
         final = os.path.join(cfg.model_dir, "cfr_final")
         self._save(final)
@@ -97,7 +104,7 @@ class DeepCFRTrainer:
     # Traversal collection
     # ------------------------------------------------------------------
 
-    def _collect(self, iteration: int) -> None:
+    def _collect(self, iteration: int, iter_bar=None) -> None:
         cfg = self.cfg
         adv_weights = {k: v.cpu() for k, v in self.adv_net.state_dict().items()}
         strat_weights = {k: v.cpu() for k, v in self.strat_net.state_dict().items()}
@@ -112,6 +119,13 @@ class DeepCFRTrainer:
             for i in range(cfg.traversals_per_player * cfg.n_players)
         ]
 
+        tbar = tqdm(
+            total=len(tasks),
+            desc="  traversals",
+            leave=False,
+            dynamic_ncols=True,
+        )
+
         if cfg.num_workers <= 1:
             # Single-process fallback (Windows dev / smoke test)
             worker_init(adv_weights, strat_weights)
@@ -119,6 +133,7 @@ class DeepCFRTrainer:
                 adv_s, strat_s = worker_task(task)
                 self.adv_buf.add_batch(adv_s)
                 self.strat_buf.add_batch(strat_s)
+                tbar.update(1)
         else:
             # Parallel: weights are sent ONCE per worker via initializer.
             ctx = multiprocessing.get_context("spawn")
@@ -132,6 +147,9 @@ class DeepCFRTrainer:
                 ):
                     self.adv_buf.add_batch(adv_s)
                     self.strat_buf.add_batch(strat_s)
+                    tbar.update(1)
+
+        tbar.close()
 
     # ------------------------------------------------------------------
     # Network training
@@ -192,7 +210,7 @@ class DeepCFRTrainer:
     # Evaluation + persistence
     # ------------------------------------------------------------------
 
-    def _evaluate(self, t: int) -> None:
+    def _evaluate(self, t: int, iter_bar=None) -> None:
         from skull_king.training.cfr.agent import CFRAgent
         n = self.cfg.n_players
         agent = CFRAgent(self.strat_net, n_players=n, name="CFR")
@@ -202,10 +220,14 @@ class DeepCFRTrainer:
         wr_r = r_r.win_rates().get("CFR", 0.0)
         wr_h = r_h.win_rates().get("CFR", 0.0)
         avg_h = r_h.avg_scores().get("CFR", 0.0)
-        print(
+        msg = (
             f"  [Eval iter={t}]  vs_random={wr_r:.1%}  "
             f"vs_heuristic={wr_h:.1%}  avg_score_H={avg_h:+.0f}"
         )
+        if iter_bar is not None:
+            iter_bar.write(msg)
+        else:
+            print(msg)
 
     def _save(self, base_path: str) -> None:
         torch.save(self.adv_net.state_dict(), f"{base_path}_adv.pt")
