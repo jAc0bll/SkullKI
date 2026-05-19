@@ -4,16 +4,16 @@
 n_players: 4
 env_seed: 42
 
-# 500 iters × 200 traversals × 4 players = 400 000 game simulations
-# With 44 workers: ~2-4h depending on CPU speed
-n_cfr_iterations: 500
+# 1000 iters × 200 traversals × 4 players = 800 000 game simulations
+# With 44 workers: ~3-5h. Utility fix (relative score) requires fresh run.
+n_cfr_iterations: 1000
 traversals_per_player: 200
 num_workers: 44
 
 net_hidden: [512, 512]
 
 adv_lr: 1.0e-3
-adv_batch_size: 1024         # larger batch → more stable gradient
+adv_batch_size: 1024
 adv_train_epochs: 8
 adv_buffer_capacity: 2_000_000
 
@@ -25,4 +25,4 @@ strat_buffer_capacity: 2_000_000
 eval_every_n_iters: 50
 checkpoint_every_n_iters: 100
 model_dir: models/skull_king
-run_name: cfr_v1_server
+run_name: cfr_v2_server

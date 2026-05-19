@@ -37,13 +37,19 @@ from skull_king.training.cfr.networks import AdvantageNet, StrategyNet, regret_m
 # ---------------------------------------------------------------------------
 
 def _compute_utility(state, player: int) -> float:
-    """Rank-based utility normalised to roughly [-1, 1]."""
+    """Utility = score relative to opponents' average.
+
+    Incentivises maximising absolute score AND beating the field.
+    Typical gap between winner (~180) and loser (~60) in a 4-player game
+    is ~120 pts; dividing by 120 keeps values roughly in [-1, +1].
+    The old rank-only signal caused the agent to converge on bid=2 as a
+    'safe' strategy that avoids losing badly but never scores well.
+    """
     scores = [ps.total_score for ps in state.player_states]
-    my_score = scores[player]
-    sorted_unique = sorted(set(scores), reverse=True)
-    rank = sorted_unique.index(my_score)
-    _RANK_BONUS = (0.50, 0.15, -0.10, -0.30, -0.40, -0.45)
-    return float(my_score) / 300.0 + _RANK_BONUS[min(rank, len(_RANK_BONUS) - 1)]
+    my_score = float(scores[player])
+    n = len(scores)
+    avg_others = sum(scores[i] for i in range(n) if i != player) / (n - 1)
+    return (my_score - avg_others) / 120.0
 
 
 def _decode_action(
