@@ -91,6 +91,7 @@ class NFSPConfig:
     sl_n_updates: int = 8               # SL gradient steps per rollout
     sl_hidden: list = field(default_factory=lambda: [256, 256])
     min_buffer_size: int = 5_000        # reservoir fill before first SL update
+    sl_sync_every_n_rollouts: int = 5   # sync SL weights to envs every N rollouts (IPC cost)
 
 
 def load_config(path: str) -> NFSPConfig:
@@ -212,18 +213,19 @@ def train(config_path: str = "nfsp_config.yaml", from_model: Optional[str] = Non
             total_timesteps=cfg.total_timesteps,
             start_mix=cfg.curriculum_start_mix,
             end_mix=cfg.curriculum_end_mix,
-            verbose=1,
+            verbose=0,
         ),
         SelfPlayCallback(
             update_freq=cfg.self_play_update_freq,
-            verbose=1,
+            verbose=0,
         ),
         NFSPCallback(
             reservoir=reservoir,
             sl_trainer=sl_trainer,
             sl_n_updates=cfg.sl_n_updates,
             min_buffer_size=cfg.min_buffer_size,
-            verbose=1,
+            sync_every_n_rollouts=cfg.sl_sync_every_n_rollouts,
+            verbose=0,
         ),
         TournamentEvalCallback(
             n_players=cfg.n_players,

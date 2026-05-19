@@ -20,7 +20,7 @@ total_timesteps: 10_000_000
 n_envs: 44                  # 44 parallel game envs — saturates ~44 CPU threads
 n_steps: 1024               # smaller rollout window → more frequent PPO+SL updates
                             # 44 * 1024 = 45,056 samples per rollout (~222 rollouts total)
-self_play_update_freq: 25_000
+self_play_update_freq: 200_000   # infrequent — serialises full PPO model to 44 procs
 eval_freq: 200_000          # less frequent than local to minimise eval overhead
 n_eval_episodes: 20
 n_eval_games: 40
@@ -52,3 +52,4 @@ sl_batch_size: 1024
 sl_n_updates: 16            # more SL updates per rollout (larger rollout = more data)
 sl_hidden: [256, 256]
 min_buffer_size: 10_000
+sl_sync_every_n_rollouts: 10   # sync SL weights every 10 rollouts (reduces IPC stalls)
