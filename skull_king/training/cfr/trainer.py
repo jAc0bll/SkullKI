@@ -136,7 +136,9 @@ class DeepCFRTrainer:
                 tbar.update(1)
         else:
             # Parallel: weights are sent ONCE per worker via initializer.
-            ctx = multiprocessing.get_context("spawn")
+            # fork is instant on Linux (no re-import); spawn is required on Windows.
+            import sys
+            ctx = multiprocessing.get_context("spawn" if sys.platform == "win32" else "fork")
             with ctx.Pool(
                 processes=cfg.num_workers,
                 initializer=worker_init,
