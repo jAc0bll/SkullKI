@@ -9,7 +9,15 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 import torch.nn as nn
-from tqdm import tqdm
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeRemainingColumn,
+)
 
 from skull_king.agents import HeuristicAgent, RandomAgent
 from skull_king.tournament.runner import TournamentRunner
@@ -19,6 +27,8 @@ from skull_king.training.cfr.traversal import worker_init, worker_task
 
 if TYPE_CHECKING:
     from skull_king.training.cfr.train import CFRConfig
+
+_console = Console(highlight=False)
 
 
 class DeepCFRTrainer:
@@ -59,49 +69,63 @@ class DeepCFRTrainer:
     def train(self) -> None:
         cfg = self.cfg
         total_traversals = cfg.traversals_per_player * cfg.n_players
-        print(f"\n{'='*66}")
-        print(f"  Deep CFR  —  {cfg.run_name}")
-        print(f"  {cfg.n_cfr_iterations} iters  ×  {total_traversals} traversals/iter  "
-              f"×  workers={cfg.num_workers}")
-        print(f"  device: {self.device}")
-        print(f"{'='*66}\n")
-
-        iter_bar = tqdm(
-            range(1, cfg.n_cfr_iterations + 1),
-            desc="CFR",
-            unit="iter",
-            dynamic_ncols=True,
+        _console.print(f"\n{'='*66}")
+        _console.print(f"  Deep CFR  -  {cfg.run_name}")
+        _console.print(
+            f"  {cfg.n_cfr_iterations} iters  x  {total_traversals} traversals/iter"
+            f"  x  workers={cfg.num_workers}"
         )
-        for t in iter_bar:
-            t0 = time.time()
+        _console.print(f"  device: {self.device}")
+        _console.print(f"{'='*66}\n")
 
-            # Deep CFR paper §4: fresh advantage net each iteration so stale
-            # regret estimates from old strategies don't corrupt training.
-            self._reset_adv()
-            self._collect(t, iter_bar)
-            adv_loss = self._train_adv()
-            strat_loss = self._train_strat()
-
-            elapsed = time.time() - t0
-            iter_bar.set_postfix(
-                adv=f"{adv_loss:.4f}",
-                strat=f"{strat_loss:.4f}",
-                adv_buf=f"{len(self.adv_buf):,}",
-                s=f"{elapsed:.1f}s",
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TextColumn("[cyan]{task.fields[metrics]}"),
+            TimeRemainingColumn(),
+            console=_console,
+            refresh_per_second=4,
+        ) as progress:
+            task = progress.add_task(
+                "CFR Training",
+                total=cfg.n_cfr_iterations,
+                metrics="",
             )
 
-            if t % cfg.eval_every_n_iters == 0:
-                iter_bar.write(f"")
-                self._evaluate(t, iter_bar)
+            for t in range(1, cfg.n_cfr_iterations + 1):
+                t0 = time.time()
 
-            if t % cfg.checkpoint_every_n_iters == 0:
-                path = os.path.join(cfg.model_dir, f"{cfg.run_name}_iter{t}")
-                self._save(path)
-                iter_bar.write(f"  [Checkpoint] -> {path}_{{adv,strat}}.pt")
+                # Deep CFR paper §4: fresh advantage net each iteration so stale
+                # regret estimates from old strategies don't corrupt training.
+                self._reset_adv()
+                self._collect(t)
+                adv_loss = self._train_adv()
+                strat_loss = self._train_strat()
+
+                elapsed = time.time() - t0
+                progress.update(
+                    task,
+                    advance=1,
+                    metrics=(
+                        f"adv={adv_loss:.4f}  strat={strat_loss:.4f}"
+                        f"  buf={len(self.adv_buf):,}  {elapsed:.1f}s/it"
+                    ),
+                )
+
+                if t % cfg.eval_every_n_iters == 0:
+                    progress.print("")
+                    self._evaluate(t, progress)
+
+                if t % cfg.checkpoint_every_n_iters == 0:
+                    path = os.path.join(cfg.model_dir, f"{cfg.run_name}_iter{t}")
+                    self._save(path)
+                    progress.print(f"  [Checkpoint] -> {path}_{{adv,strat}}.pt")
 
         final = os.path.join(cfg.model_dir, "cfr_final")
         self._save(final)
-        print(f"\nTraining complete. Saved -> {final}_{{adv,strat}}.pt")
+        _console.print(f"\nTraining complete. Saved -> {final}_{{adv,strat}}.pt")
 
     # ------------------------------------------------------------------
     # Advantage network reset (Deep CFR paper §4)
@@ -126,7 +150,7 @@ class DeepCFRTrainer:
     # Traversal collection
     # ------------------------------------------------------------------
 
-    def _collect(self, iteration: int, iter_bar=None) -> None:
+    def _collect(self, iteration: int) -> None:
         cfg = self.cfg
         adv_weights = {k: v.cpu() for k, v in self.adv_net.state_dict().items()}
         strat_weights = {k: v.cpu() for k, v in self.strat_net.state_dict().items()}
@@ -141,13 +165,6 @@ class DeepCFRTrainer:
             for i in range(cfg.traversals_per_player * cfg.n_players)
         ]
 
-        tbar = tqdm(
-            total=len(tasks),
-            desc="  traversals",
-            leave=False,
-            dynamic_ncols=True,
-        )
-
         if cfg.num_workers <= 1:
             # Single-process fallback (Windows dev / smoke test)
             worker_init(adv_weights, strat_weights)
@@ -155,7 +172,6 @@ class DeepCFRTrainer:
                 adv_s, strat_s = worker_task(task)
                 self.adv_buf.add_batch(adv_s)
                 self.strat_buf.add_batch(strat_s)
-                tbar.update(1)
         else:
             # Parallel: weights are sent ONCE per worker via initializer.
             # fork is instant on Linux (no re-import); spawn is required on Windows.
@@ -171,9 +187,6 @@ class DeepCFRTrainer:
                 ):
                     self.adv_buf.add_batch(adv_s)
                     self.strat_buf.add_batch(strat_s)
-                    tbar.update(1)
-
-        tbar.close()
 
     # ------------------------------------------------------------------
     # Network training
@@ -235,7 +248,7 @@ class DeepCFRTrainer:
     # Evaluation + persistence
     # ------------------------------------------------------------------
 
-    def _evaluate(self, t: int, iter_bar=None) -> None:
+    def _evaluate(self, t: int, progress: Progress | None = None) -> None:
         from skull_king.training.cfr.agent import CFRAgent
         n = self.cfg.n_players
         agent = CFRAgent(self.strat_net, n_players=n, name="CFR")
@@ -249,10 +262,10 @@ class DeepCFRTrainer:
             f"  [Eval iter={t}]  vs_random={wr_r:.1%}  "
             f"vs_heuristic={wr_h:.1%}  avg_score_H={avg_h:+.0f}"
         )
-        if iter_bar is not None:
-            iter_bar.write(msg)
+        if progress is not None:
+            progress.print(msg)
         else:
-            print(msg)
+            _console.print(msg)
 
     def _save(self, base_path: str) -> None:
         torch.save(self.adv_net.state_dict(), f"{base_path}_adv.pt")
