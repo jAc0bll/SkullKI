@@ -128,21 +128,19 @@ class DeepCFRTrainer:
         _console.print(f"\nTraining complete. Saved -> {final}_{{adv,strat}}.pt")
 
     # ------------------------------------------------------------------
-    # Advantage network reset (Deep CFR paper §4)
+    # Advantage buffer cycle (per-iteration refresh)
     # ------------------------------------------------------------------
 
     def _reset_adv(self) -> None:
-        """Re-initialize advantage network + optimizer + buffer each iteration.
+        """Clear the advantage buffer and reset the optimizer each iteration.
 
-        Stale advantage estimates from previous iterations are invalid once the
-        strategy changes — training on them introduces systematic bias.  The
-        strategy buffer is intentionally NOT cleared: it accumulates the full
-        history of regret-matched strategies, which is what the strategy net
-        needs to approximate the Nash average.
+        Buffer clear: removes stale regret targets computed under old strategies.
+        Optimizer reset: drops accumulated momentum so the warm-started weights
+        adapt cleanly to the new samples without gradient artifacts.
+        Network weights are kept (warm start) — re-initialising to random and
+        training for only a few dozen steps leaves the net near-random, which
+        makes all strategies uniform and collapses the strategy net.
         """
-        hidden = tuple(self.cfg.net_hidden)
-        self.adv_net = AdvantageNet(hidden=hidden).to(self.device)
-        self.adv_net.eval()
         self.adv_opt = torch.optim.Adam(self.adv_net.parameters(), lr=self.cfg.adv_lr)
         self.adv_buf.clear()
 
