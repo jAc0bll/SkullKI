@@ -75,6 +75,9 @@ class DeepCFRTrainer:
         for t in iter_bar:
             t0 = time.time()
 
+            # Deep CFR paper §4: fresh advantage net each iteration so stale
+            # regret estimates from old strategies don't corrupt training.
+            self._reset_adv()
             self._collect(t, iter_bar)
             adv_loss = self._train_adv()
             strat_loss = self._train_strat()
@@ -94,11 +97,30 @@ class DeepCFRTrainer:
             if t % cfg.checkpoint_every_n_iters == 0:
                 path = os.path.join(cfg.model_dir, f"{cfg.run_name}_iter{t}")
                 self._save(path)
-                iter_bar.write(f"  [Checkpoint] → {path}_{{adv,strat}}.pt")
+                iter_bar.write(f"  [Checkpoint] -> {path}_{{adv,strat}}.pt")
 
         final = os.path.join(cfg.model_dir, "cfr_final")
         self._save(final)
-        print(f"\nTraining complete. Saved → {final}_{{adv,strat}}.pt")
+        print(f"\nTraining complete. Saved -> {final}_{{adv,strat}}.pt")
+
+    # ------------------------------------------------------------------
+    # Advantage network reset (Deep CFR paper §4)
+    # ------------------------------------------------------------------
+
+    def _reset_adv(self) -> None:
+        """Re-initialize advantage network + optimizer + buffer each iteration.
+
+        Stale advantage estimates from previous iterations are invalid once the
+        strategy changes — training on them introduces systematic bias.  The
+        strategy buffer is intentionally NOT cleared: it accumulates the full
+        history of regret-matched strategies, which is what the strategy net
+        needs to approximate the Nash average.
+        """
+        hidden = tuple(self.cfg.net_hidden)
+        self.adv_net = AdvantageNet(hidden=hidden).to(self.device)
+        self.adv_net.eval()
+        self.adv_opt = torch.optim.Adam(self.adv_net.parameters(), lr=self.cfg.adv_lr)
+        self.adv_buf.clear()
 
     # ------------------------------------------------------------------
     # Traversal collection
@@ -197,8 +219,9 @@ class DeepCFRTrainer:
             logits = self.strat_net(obs_t)
             logits = logits.masked_fill(~mask_t, float("-inf"))
             log_probs = torch.log_softmax(logits, dim=-1)
-            # Cross-entropy: −Σ target * log_prob (only over legal actions)
-            loss = -(strat_t * log_probs).sum(dim=-1).mean()
+            # Cross-entropy: −Σ target * log_prob (only over legal actions).
+            # nan_to_num handles 0 * -inf for illegal-action slots (IEEE 754).
+            loss = -(strat_t * log_probs).nan_to_num(0.0).sum(dim=-1).mean()
 
             self.strat_opt.zero_grad()
             loss.backward()

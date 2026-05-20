@@ -69,26 +69,31 @@ def _decode_action(
 # Worker entry point (must be a top-level function for multiprocessing)
 # ---------------------------------------------------------------------------
 
-# Module-level weights set once per worker process via Pool initializer.
-_ADV_WEIGHTS: dict = {}
-_STRAT_WEIGHTS: dict = {}
+# Network objects built once per worker process via Pool initializer.
+# Avoids rebuilding + load_state_dict on every traversal call.
+_ADV_NET: Optional[AdvantageNet] = None
+_STRAT_NET: Optional[StrategyNet] = None
 
 
 def worker_init(adv_weights: dict, strat_weights: dict) -> None:
-    """Called once per worker process to cache network weights."""
+    """Called once per worker process: build networks and load weights."""
     import torch
     # After fork(), only the calling thread survives → MKL/OpenMP pools are dead.
     # Force single-threaded torch to avoid deadlock on any linear layer call.
     torch.set_num_threads(1)
-    global _ADV_WEIGHTS, _STRAT_WEIGHTS
-    _ADV_WEIGHTS = adv_weights
-    _STRAT_WEIGHTS = strat_weights
+    global _ADV_NET, _STRAT_NET
+    _ADV_NET = AdvantageNet()
+    _ADV_NET.load_state_dict(adv_weights)
+    _ADV_NET.eval()
+    _STRAT_NET = StrategyNet()
+    _STRAT_NET.load_state_dict(strat_weights)
+    _STRAT_NET.eval()
 
 
 def worker_task(args: tuple) -> tuple[list, list]:
-    """Unpack args and run one traversal using cached weights."""
+    """Unpack args and run one traversal using cached network objects."""
     traverser, seed, n_players = args
-    return traverse(traverser, _ADV_WEIGHTS, _STRAT_WEIGHTS, seed, n_players)
+    return traverse(traverser, _ADV_NET, _STRAT_NET, seed, n_players)
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +102,8 @@ def worker_task(args: tuple) -> tuple[list, list]:
 
 def traverse(
     traverser: int,
-    adv_weights: dict,
-    strat_weights: dict,
+    adv_net: AdvantageNet,
+    strat_net: StrategyNet,
     seed: int,
     n_players: int = 4,
 ) -> tuple[list, list]:
@@ -108,8 +113,8 @@ def traverse(
     ----------
     traverser:
         The player whose regrets are updated this traversal.
-    adv_weights / strat_weights:
-        CPU state-dicts for the current advantage and strategy networks.
+    adv_net / strat_net:
+        Network objects (built once per worker, not per traversal).
     seed:
         RNG seed for both card dealing and action sampling.
 
@@ -120,15 +125,6 @@ def traverse(
     strat_samples:
         list of (obs, mask, strategy)             — one per ALL players' decisions
     """
-    # Build local network instances — no shared state between workers.
-    adv_net = AdvantageNet()
-    adv_net.load_state_dict(adv_weights)
-    adv_net.eval()
-
-    strat_net = StrategyNet()
-    strat_net.load_state_dict(strat_weights)
-    strat_net.eval()
-
     # Utility env used only for obs / mask building, never stepped.
     util_env = SkullKingEnv(n_players=n_players)
 

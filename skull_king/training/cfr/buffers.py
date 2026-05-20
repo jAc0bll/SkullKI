@@ -53,6 +53,10 @@ class AdvantageBuffer:
             self._actions[idx],
         )
 
+    def clear(self) -> None:
+        self._pos = 0
+        self._size = 0
+
     def __len__(self) -> int:
         return self._size
 
