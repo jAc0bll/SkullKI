@@ -59,11 +59,17 @@ class CFRConfig:
 
 def load_config(path: str) -> CFRConfig:
     with open(path) as f:
-        raw = yaml.safe_load(f)
+        raw = yaml.safe_load(f) or {}
     cfg = CFRConfig()
+    known = {f.name for f in __import__("dataclasses").fields(cfg)}
+    unknown = [k for k in raw if k not in known]
+    if unknown:
+        raise ValueError(
+            f"Unknown config keys in {path}: {unknown}.  "
+            f"Valid keys: {sorted(known)}"
+        )
     for k, v in raw.items():
-        if hasattr(cfg, k):
-            setattr(cfg, k, v)
+        setattr(cfg, k, v)
     # Backward compat: if old epoch keys used but new step keys not set,
     # convert epochs → rough step count (epochs × ~500 steps/epoch).
     if cfg.adv_train_steps == 500 and cfg.adv_train_epochs > 0:

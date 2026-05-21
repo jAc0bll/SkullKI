@@ -57,11 +57,17 @@ class AdvantageNet(_MLP):
     ) -> None:
         super().__init__(obs_size, action_size, hidden)
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def predict(self, obs_np: np.ndarray, mask_np: np.ndarray) -> np.ndarray:
-        """Return advantage vector; illegal actions are zeroed."""
-        obs_t = torch.FloatTensor(obs_np).unsqueeze(0)
+        """Return advantage vector; illegal actions are zeroed.
+
+        ``inference_mode`` is slightly faster than ``no_grad`` because it skips
+        the autograd version counter bookkeeping entirely — meaningful when this
+        function is called ~80k times per CFR iteration.
+        """
+        obs_t = torch.from_numpy(obs_np).unsqueeze(0)
         adv = self.forward(obs_t)[0].numpy()
+        adv = adv.copy()  # inference_mode returns a read-only view; we need writable
         adv[~mask_np] = 0.0
         return adv
 
@@ -81,18 +87,29 @@ class StrategyNet(_MLP):
     ) -> None:
         super().__init__(obs_size, action_size, hidden)
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def predict(
         self,
         obs_np: np.ndarray,
         mask_np: np.ndarray,
         deterministic: bool = True,
     ) -> int:
-        obs_t = torch.FloatTensor(obs_np).unsqueeze(0)
-        logits = self.forward(obs_t)[0]
-        mask_t = torch.BoolTensor(mask_np)
+        obs_t = torch.from_numpy(obs_np).unsqueeze(0)
+        logits = self.forward(obs_t)[0].clone()  # clone so masked_fill is writable
+        mask_t = torch.from_numpy(mask_np)
         logits[~mask_t] = float("-inf")
         if deterministic:
             return int(logits.argmax().item())
         probs = torch.softmax(logits, dim=-1)
         return int(torch.multinomial(probs, 1).item())
+
+    @torch.inference_mode()
+    def predict_probs(self, obs_np: np.ndarray, mask_np: np.ndarray) -> np.ndarray:
+        """Return softmax probability distribution over all actions (illegal=0)."""
+        obs_t = torch.from_numpy(obs_np).unsqueeze(0)
+        logits = self.forward(obs_t)[0].clone()
+        mask_t = torch.from_numpy(mask_np)
+        logits[~mask_t] = float("-inf")
+        probs = torch.softmax(logits, dim=-1).numpy().copy()
+        probs[~mask_np] = 0.0
+        return probs

@@ -24,7 +24,7 @@ from skull_king.agents import HeuristicAgent, RandomAgent
 from skull_king.tournament.runner import TournamentRunner
 from skull_king.training.cfr.buffers import AdvantageBuffer, StrategyBuffer
 from skull_king.training.cfr.networks import AdvantageNet, StrategyNet
-from skull_king.training.cfr.traversal import worker_init, worker_task, worker_update_nets
+from skull_king.training.cfr.traversal import worker_init, worker_task
 
 if TYPE_CHECKING:
     from skull_king.training.cfr.train import CFRConfig
@@ -89,8 +89,12 @@ class DeepCFRTrainer:
         self.adv_opt = torch.optim.Adam(self.adv_net.parameters(), lr=cfg.adv_lr)
         self.strat_opt = torch.optim.Adam(self.strat_net.parameters(), lr=cfg.strat_lr)
 
-        self.adv_buf = AdvantageBuffer(capacity=cfg.adv_buffer_capacity)
-        self.strat_buf = StrategyBuffer(capacity=cfg.strat_buffer_capacity)
+        self.adv_buf = AdvantageBuffer(
+            capacity=cfg.adv_buffer_capacity, seed=cfg.env_seed + 1
+        )
+        self.strat_buf = StrategyBuffer(
+            capacity=cfg.strat_buffer_capacity, seed=cfg.env_seed + 2
+        )
 
         self._rng = np.random.default_rng(cfg.env_seed)
         os.makedirs(cfg.model_dir, exist_ok=True)
@@ -131,13 +135,24 @@ class DeepCFRTrainer:
             torch.set_num_threads(min(8, torch.get_num_threads()))
 
         persistent_pool = None
+        self._manager = None
+        self._shared_w = None
+        self._shared_v = None
         if cfg.num_workers > 1:
             init_adv = {k: v.cpu() for k, v in self.adv_net.state_dict().items()}
-            init_strat = {k: v.cpu() for k, v in self.strat_net.state_dict().items()}
+            # Manager-backed dict + shared atomic int for lockless weight
+            # broadcast.  Workers read the version each traversal (single
+            # atomic int — essentially free) and only do a full reload when
+            # the version moves forward — guarantees every worker sees every
+            # update, unlike the previous pool.map-based broadcast.
+            self._manager = self._ctx.Manager()
+            self._shared_w = self._manager.dict()
+            self._shared_w["weights"] = init_adv
+            self._shared_v = self._ctx.Value("Q", 0)  # iter-0 already loaded
             persistent_pool = self._ctx.Pool(
                 processes=cfg.num_workers,
                 initializer=worker_init,
-                initargs=(init_adv, init_strat),
+                initargs=(init_adv, cfg.n_players, self._shared_w, self._shared_v),
             )
 
         try:
@@ -187,6 +202,8 @@ class DeepCFRTrainer:
             if persistent_pool is not None:
                 persistent_pool.close()
                 persistent_pool.join()
+            if self._manager is not None:
+                self._manager.shutdown()
 
         final = os.path.join(cfg.model_dir, "cfr_final")
         self._save(final)
@@ -217,7 +234,6 @@ class DeepCFRTrainer:
     def _collect(self, iteration: int, persistent_pool) -> None:
         cfg = self.cfg
         adv_weights = {k: v.cpu() for k, v in self.adv_net.state_dict().items()}
-        strat_weights = {k: v.cpu() for k, v in self.strat_net.state_dict().items()}
 
         tasks = [
             (
@@ -228,28 +244,49 @@ class DeepCFRTrainer:
             for i in range(cfg.traversals_per_player * cfg.n_players)
         ]
 
+        # Publish new weights via shared memory + bump the version counter.
+        # Every worker re-checks the version at the start of every traversal
+        # and reloads at most once per iteration — race-free, no broadcast
+        # task scheduling involved.
+        if self._shared_w is not None and self._shared_v is not None:
+            self._shared_w["weights"] = adv_weights
+            with self._shared_v.get_lock():
+                self._shared_v.value += 1
+
         if persistent_pool is None:
             # Single-process fallback (num_workers <= 1).
-            worker_init(adv_weights, strat_weights)
-            for task in tasks:
-                adv_s, strat_s = worker_task(task)
-                self.adv_buf.add_batch(adv_s)
-                self.strat_buf.add_batch(strat_s)
+            worker_init(adv_weights, cfg.n_players)  # shared_w/v stay None
+            results = (worker_task(t) for t in tasks)
         else:
-            # Broadcast updated weights to all persistent workers, then collect.
-            # pool.map is synchronous — all workers are up-to-date before
-            # imap_unordered starts.  Total IPC: ~3 MB × num_workers, ~0.3 s.
-            update_args = (adv_weights, strat_weights)
-            persistent_pool.map(
-                worker_update_nets,
-                [update_args] * cfg.num_workers,
-                chunksize=1,
+            results = persistent_pool.imap_unordered(worker_task, tasks, chunksize=4)
+
+        all_adv_obs, all_adv_masks, all_adv_targets, all_adv_actions = [], [], [], []
+        all_strat_obs, all_strat_masks, all_strat_strategies = [], [], []
+        for result in results:
+            a_obs, a_masks, a_targets, a_actions, s_obs, s_masks, s_strats = result
+            if a_obs.shape[0] > 0:
+                all_adv_obs.append(a_obs)
+                all_adv_masks.append(a_masks)
+                all_adv_targets.append(a_targets)
+                all_adv_actions.append(a_actions)
+            if s_obs.shape[0] > 0:
+                all_strat_obs.append(s_obs)
+                all_strat_masks.append(s_masks)
+                all_strat_strategies.append(s_strats)
+
+        if all_adv_obs:
+            self.adv_buf.add_batch_vec(
+                np.concatenate(all_adv_obs),
+                np.concatenate(all_adv_masks),
+                np.concatenate(all_adv_targets),
+                np.concatenate(all_adv_actions),
             )
-            for adv_s, strat_s in persistent_pool.imap_unordered(
-                worker_task, tasks, chunksize=4
-            ):
-                self.adv_buf.add_batch(adv_s)
-                self.strat_buf.add_batch(strat_s)
+        if all_strat_obs:
+            self.strat_buf.add_batch_vec(
+                np.concatenate(all_strat_obs),
+                np.concatenate(all_strat_masks),
+                np.concatenate(all_strat_strategies),
+            )
 
     # ------------------------------------------------------------------
     # Network training (fixed gradient steps per iteration)
@@ -259,9 +296,16 @@ class DeepCFRTrainer:
         cfg = self.cfg
         if len(self.adv_buf) < cfg.adv_batch_size:
             return 0.0
+        # Scale steps with buffer size so early iters (~50k samples) don't
+        # over-train and overfit to noisy early data.  Each sample should be
+        # seen ~4× on average per iteration: steps = buffer_size / (batch//4).
+        effective_steps = min(
+            cfg.adv_train_steps,
+            max(1, len(self.adv_buf) // (cfg.adv_batch_size // 4)),
+        )
         self.adv_net.train()
         total = 0.0
-        for _ in range(cfg.adv_train_steps):
+        for _ in range(effective_steps):
             obs, _, targets, actions = self.adv_buf.sample(cfg.adv_batch_size)
             obs_t = torch.FloatTensor(obs).to(self.device)
             targets_t = torch.FloatTensor(targets).to(self.device)
@@ -278,15 +322,19 @@ class DeepCFRTrainer:
             self.adv_opt.step()
             total += loss.item()
         self.adv_net.eval()
-        return total / cfg.adv_train_steps
+        return total / effective_steps
 
     def _train_strat(self) -> float:
         cfg = self.cfg
         if len(self.strat_buf) < cfg.strat_batch_size:
             return 0.0
+        effective_steps = min(
+            cfg.strat_train_steps,
+            max(1, len(self.strat_buf) // (cfg.strat_batch_size // 4)),
+        )
         self.strat_net.train()
         total = 0.0
-        for _ in range(cfg.strat_train_steps):
+        for _ in range(effective_steps):
             obs, masks, strategies = self.strat_buf.sample(cfg.strat_batch_size)
             obs_t = torch.FloatTensor(obs).to(self.device)
             mask_t = torch.BoolTensor(masks).to(self.device)
@@ -305,7 +353,7 @@ class DeepCFRTrainer:
             self.strat_opt.step()
             total += loss.item()
         self.strat_net.eval()
-        return total / cfg.strat_train_steps
+        return total / effective_steps
 
     # ------------------------------------------------------------------
     # Evaluation + persistence

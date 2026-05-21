@@ -35,7 +35,7 @@ print("=" * 60)
 # ── 1. Pool creation with EMPTY buffers ──────────────────────────
 t0 = time.time()
 pool = ctx.Pool(cfg.num_workers, initializer=worker_init,
-                initargs=(adv_weights, strat_weights))
+                initargs=(adv_weights, cfg.n_players))
 pool.close(); pool.join()
 t_pool_empty = time.time() - t0
 print(f"[1] Pool creation (empty buffers):   {t_pool_empty:.2f}s")
@@ -43,15 +43,24 @@ print(f"[1] Pool creation (empty buffers):   {t_pool_empty:.2f}s")
 # ── 2. Traversal collection ───────────────────────────────────────
 t0 = time.time()
 pool = ctx.Pool(cfg.num_workers, initializer=worker_init,
-                initargs=(adv_weights, strat_weights))
-all_adv, all_strat = [], []
-for adv_s, strat_s in pool.imap_unordered(worker_task, tasks, chunksize=4):
-    all_adv.extend(adv_s)
-    all_strat.extend(strat_s)
+                initargs=(adv_weights, cfg.n_players))
+n_adv_total = n_strat_total = 0
+all_adv_obs, all_adv_masks, all_adv_targets, all_adv_actions = [], [], [], []
+all_strat_obs, all_strat_masks, all_strat_strats = [], [], []
+for result in pool.imap_unordered(worker_task, tasks, chunksize=4):
+    a_obs, a_masks, a_targets, a_actions, s_obs, s_masks, s_strats = result
+    n_adv_total += a_obs.shape[0]
+    n_strat_total += s_obs.shape[0]
+    if a_obs.shape[0]:
+        all_adv_obs.append(a_obs); all_adv_masks.append(a_masks)
+        all_adv_targets.append(a_targets); all_adv_actions.append(a_actions)
+    if s_obs.shape[0]:
+        all_strat_obs.append(s_obs); all_strat_masks.append(s_masks)
+        all_strat_strats.append(s_strats)
 pool.close(); pool.join()
 t_collect = time.time() - t0
 print(f"[2] Traversal collection:            {t_collect:.2f}s  "
-      f"({len(all_adv):,} adv samples, {len(all_strat):,} strat samples)")
+      f"({n_adv_total:,} adv samples, {n_strat_total:,} strat samples)")
 
 # ── 3. Pool creation with FULL pre-allocated buffers ─────────────
 adv_buf = AdvantageBuffer(capacity=cfg.adv_buffer_capacity)
@@ -66,15 +75,20 @@ print(f"      total   : {total_gb:.2f} GB")
 
 t0 = time.time()
 pool = ctx.Pool(cfg.num_workers, initializer=worker_init,
-                initargs=(adv_weights, strat_weights))
+                initargs=(adv_weights, cfg.n_players))
 pool.close(); pool.join()
 t_pool_full = time.time() - t0
 print(f"\n[3] Pool creation (full buffers pre-alloc): {t_pool_full:.2f}s  "
       f"({'OK' if t_pool_full < 2 else 'BOTTLENECK'})")
 
 # ── 4. Advantage net training ─────────────────────────────────────
-for obs, mask, tgt, act in all_adv:
-    adv_buf.add(obs, mask, tgt, act)
+if all_adv_obs:
+    adv_buf.add_batch_vec(
+        np.concatenate(all_adv_obs),
+        np.concatenate(all_adv_masks),
+        np.concatenate(all_adv_targets),
+        np.concatenate(all_adv_actions),
+    )
 
 adv_opt = torch.optim.Adam(adv_net.parameters(), lr=cfg.adv_lr)
 adv_net.train()
@@ -95,8 +109,12 @@ t_adv = time.time() - t0
 print(f"[4] Adv net training ({cfg.adv_train_steps} steps):   {t_adv:.2f}s")
 
 # ── 5. Strategy net training ──────────────────────────────────────
-for obs, mask, strat in all_strat:
-    strat_buf.add(obs, mask, strat)
+if all_strat_obs:
+    strat_buf.add_batch_vec(
+        np.concatenate(all_strat_obs),
+        np.concatenate(all_strat_masks),
+        np.concatenate(all_strat_strats),
+    )
 
 strat_opt = torch.optim.Adam(strat_net.parameters(), lr=cfg.strat_lr)
 strat_net.train()

@@ -154,6 +154,16 @@ class GameEngine:
 
     def place_bid(self, player_index: int, bid: int) -> GameState:
         """Record a bid for *player_index*. Legal during BIDDING phase only."""
+        self.place_bid_no_state(player_index, bid)
+        return self.get_state()
+
+    def place_bid_no_state(self, player_index: int, bid: int) -> None:
+        """Like ``place_bid`` but skips the GameState freeze on return.
+
+        For hot-path internal callers (CFR worker) that read engine internals
+        directly instead of going through GameState — every avoided freeze
+        skips a ``FrozenPlayerState`` construction for every player.
+        """
         Validator.validate_bid(
             player_index, bid, self._round, self._phase,
             frozenset(self._bids_placed), self.n_players,
@@ -164,8 +174,6 @@ class GameEngine:
         if len(self._bids_placed) == self.n_players:
             self._phase = GamePhase.PLAYING
 
-        return self.get_state()
-
     def play_card(
         self,
         player_index: int,
@@ -173,6 +181,16 @@ class GameEngine:
         tigress_mode: Optional[TigressMode] = None,
     ) -> GameState:
         """Play *card* for *player_index*. Legal during PLAYING phase only."""
+        self.play_card_no_state(player_index, card, tigress_mode)
+        return self.get_state()
+
+    def play_card_no_state(
+        self,
+        player_index: int,
+        card: Card,
+        tigress_mode: Optional[TigressMode] = None,
+    ) -> None:
+        """Like ``play_card`` but skips the GameState freeze on return."""
         expected = self._current_player_index()
         Validator.validate_play(
             player_index, card, tigress_mode,
@@ -192,8 +210,6 @@ class GameEngine:
 
         if self._play_count == self.n_players:
             self._resolve_trick()
-
-        return self.get_state()
 
     def get_state(self) -> GameState:
         """Return an immutable snapshot of the current game state."""

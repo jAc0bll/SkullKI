@@ -40,6 +40,36 @@ _SPECIAL_COUNTS: dict[CardType, int] = {
     CardType.TIGRESS: 1,
 }
 
+# Compact per-identity hash table.  Used by Card.__hash__ to avoid the slow
+# default dataclass hash which calls Enum.__hash__ on every Suit and CardType
+# (profiling showed ~20% of CFR traversal time was spent in enum hashing for
+# dict[Card, …] lookups in observation / mask building).
+#
+# Encoding (60 distinct equality classes — Pirate ×5 etc. collapse since they
+# compare equal):
+#   0..55:   NUMBERED  (suit_idx × 14 + (value-1))
+#   56:      ESCAPE
+#   57:      PIRATE
+#   58:      MERMAID
+#   59:      SKULL_KING
+#   60:      TIGRESS
+_SUIT_HASH_IDX: dict["Suit", int] = {}  # populated below once Suit is defined
+_TYPE_HASH_OFFSET: dict["CardType", int] = {}
+
+
+def _init_hash_tables() -> None:
+    suits = list(Suit)  # deterministic order from Enum
+    for i, s in enumerate(suits):
+        _SUIT_HASH_IDX[s] = i
+    _TYPE_HASH_OFFSET[CardType.ESCAPE] = 56
+    _TYPE_HASH_OFFSET[CardType.PIRATE] = 57
+    _TYPE_HASH_OFFSET[CardType.MERMAID] = 58
+    _TYPE_HASH_OFFSET[CardType.SKULL_KING] = 59
+    _TYPE_HASH_OFFSET[CardType.TIGRESS] = 60
+
+
+_init_hash_tables()
+
 
 @dataclass(frozen=True)
 class Card:
@@ -53,11 +83,21 @@ class Card:
                 raise ValueError("Numbered card requires a suit")
             if self.value is None or not (1 <= self.value <= 14):
                 raise ValueError(f"Numbered card value must be 1–14, got {self.value!r}")
+            h = _SUIT_HASH_IDX[self.suit] * 14 + (self.value - 1)
         else:
             if self.suit is not None:
                 raise ValueError(f"{self.card_type.value} card must not have a suit")
             if self.value is not None:
                 raise ValueError(f"{self.card_type.value} card must not have a value")
+            h = _TYPE_HASH_OFFSET[self.card_type]
+        # frozen dataclass: must use object.__setattr__ to write attributes.
+        object.__setattr__(self, "_hash", h)
+
+    def __hash__(self) -> int:
+        # Equal cards always have the same hash because we derive `_hash`
+        # deterministically from (card_type, suit, value).  Dataclass-generated
+        # __eq__ stays in effect and is the source of truth for equality.
+        return self._hash
 
     @property
     def is_special(self) -> bool:

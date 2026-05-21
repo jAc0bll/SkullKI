@@ -29,27 +29,43 @@ from skull_king.env.skull_king_env import (
     _CANONICAL_DECK,
 )
 from skull_king.game_state import GamePhase
-from skull_king.training.cfr.networks import AdvantageNet, StrategyNet, regret_match
+from skull_king.training.cfr.networks import AdvantageNet, regret_match
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Normalisation for the score-vs-field utility.  Empirically the typical gap
+# between winner and field-average is ~30·n_players points in Skull King
+# (a 4-player game has ~120 gap, a 6-player game has ~180 gap).  This keeps
+# utilities roughly in [-1, +1] regardless of player count.
+_UTILITY_SCALE_PER_PLAYER = 30.0
+
+
 def _compute_utility(state, player: int) -> float:
-    """Utility = score relative to opponents' average.
+    """Utility = score relative to opponents' average, scaled by n_players.
 
     Incentivises maximising absolute score AND beating the field.
-    Typical gap between winner (~180) and loser (~60) in a 4-player game
-    is ~120 pts; dividing by 120 keeps values roughly in [-1, +1].
-    The old rank-only signal caused the agent to converge on bid=2 as a
-    'safe' strategy that avoids losing badly but never scores well.
+    Dividing by ``30·n_players`` keeps values roughly in [-1, +1] for any
+    player count.  The old rank-only signal caused the agent to converge on
+    bid=2 as a 'safe' strategy that avoids losing badly but never scores well.
     """
     scores = [ps.total_score for ps in state.player_states]
+    return _utility_from_scores(scores, player)
+
+
+def _compute_utility_from_engine(engine, player: int) -> float:
+    """Fast variant that reads engine internals directly (no GameState freeze)."""
+    scores = [p.total_score for p in engine._players]
+    return _utility_from_scores(scores, player)
+
+
+def _utility_from_scores(scores: list[float], player: int) -> float:
     my_score = float(scores[player])
     n = len(scores)
     avg_others = sum(scores[i] for i in range(n) if i != player) / (n - 1)
-    return (my_score - avg_others) / 120.0
+    return (my_score - avg_others) / (_UTILITY_SCALE_PER_PLAYER * n)
 
 
 def _decode_action(
@@ -71,8 +87,31 @@ def _decode_action(
 
 # Network objects built once per worker process via Pool initializer.
 # Avoids rebuilding + load_state_dict on every traversal call.
+#
+# Note: only AdvantageNet is needed for traversal.  StrategyNet is trained
+# from regret-matched targets and used only at inference time outside the
+# worker, so we never ship strat weights through IPC (saves ~3.4 MB × N workers
+# per iteration, ~150 MB on a 44-worker server).
 _ADV_NET: Optional[AdvantageNet] = None
-_STRAT_NET: Optional[StrategyNet] = None
+
+# Utility env cached per worker for obs/mask building.
+# Allocating a fresh SkullKingEnv per traversal is wasteful — only the player
+# count differs, so we initialise once at worker startup.
+_UTIL_ENV: Optional[SkullKingEnv] = None
+
+# Shared-memory weight broadcast:
+#   _SHARED_W   — Manager().dict() holding the current adv-net state dict
+#   _SHARED_V   — ctx.Value('Q', 0), bumped each iteration the main process
+#                 publishes new weights.  Reads are atomic (lockless) and fast.
+#   _LOCAL_V    — per-worker copy of the version we last loaded; reloads only
+#                 happen when the shared version moves ahead of ours.
+#
+# This replaces the older `pool.map(worker_update_nets, …)` broadcast which
+# could leave some workers with stale weights when one worker pulled multiple
+# update tasks before peers pulled any.
+_SHARED_W = None         # type: ignore[assignment]
+_SHARED_V = None         # type: ignore[assignment]
+_LOCAL_V: int = -1
 
 
 def _hidden_from_weights(weights: dict) -> tuple[int, ...]:
@@ -94,41 +133,63 @@ def _hidden_from_weights(weights: dict) -> tuple[int, ...]:
     return tuple(hidden)
 
 
-def worker_init(adv_weights: dict, strat_weights: dict) -> None:
-    """Called once per worker process: build networks and load weights."""
+def worker_init(
+    adv_weights: dict,
+    n_players: int,
+    shared_w=None,
+    shared_v=None,
+) -> None:
+    """Called once per worker process: build adv-net, util env, install shared-
+    memory handles for the lock-free weight broadcast.
+
+    ``adv_weights`` is the iter-0 state dict (used to initialise the net before
+    the first broadcast arrives).  ``shared_w`` / ``shared_v`` are the manager-
+    backed dict and Value('Q') used for subsequent broadcasts.  Single-process
+    mode (called directly without a pool) passes ``None`` for the shared args.
+    """
     import torch
     # After fork(), only the calling thread survives → MKL/OpenMP pools are dead.
     # Force single-threaded torch to avoid deadlock on any linear layer call.
     torch.set_num_threads(1)
-    global _ADV_NET, _STRAT_NET
+    global _ADV_NET, _UTIL_ENV, _SHARED_W, _SHARED_V, _LOCAL_V
     hidden = _hidden_from_weights(adv_weights)
     _ADV_NET = AdvantageNet(hidden=hidden)
     _ADV_NET.load_state_dict(adv_weights)
     _ADV_NET.eval()
-    _STRAT_NET = StrategyNet(hidden=hidden)
-    _STRAT_NET.load_state_dict(strat_weights)
-    _STRAT_NET.eval()
+    _UTIL_ENV = SkullKingEnv(n_players=n_players)
+    _SHARED_W = shared_w
+    _SHARED_V = shared_v
+    _LOCAL_V = 0  # iter-0 weights already loaded
 
 
-def worker_update_nets(args: tuple) -> None:
-    """Broadcast updated network weights to a persistent worker.
+def _maybe_reload_weights() -> None:
+    """Pull the latest adv-weights from shared memory if our local copy is stale.
 
-    Called via pool.map at the start of each iteration so the persistent
-    pool does not need to be torn down and respawned just to push new weights.
-    Each worker receives exactly one call (map distributes N tasks to N workers).
+    Fast path (no broadcast pending) is a single atomic int read on the Value;
+    the slow path (one IPC fetch + load_state_dict) runs at most once per
+    worker per iteration.
     """
-    import torch
-    adv_weights, strat_weights = args
-    if _ADV_NET is not None:
-        _ADV_NET.load_state_dict(adv_weights)
-    if _STRAT_NET is not None:
-        _STRAT_NET.load_state_dict(strat_weights)
+    global _LOCAL_V
+    if _SHARED_V is None or _SHARED_W is None or _ADV_NET is None:
+        return
+    v = _SHARED_V.value
+    if v > _LOCAL_V:
+        weights = _SHARED_W["weights"]
+        _ADV_NET.load_state_dict(weights)
+        _LOCAL_V = v
 
 
-def worker_task(args: tuple) -> tuple[list, list]:
-    """Unpack args and run one traversal using cached network objects."""
+def worker_task(args: tuple) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray,
+                                       np.ndarray, np.ndarray, np.ndarray]:
+    """Unpack args and run one traversal using cached network + env.
+
+    Calls ``_maybe_reload_weights`` first so each worker is guaranteed to see
+    the latest adv-net weights before the very first traversal of an iteration
+    — no broadcast race possible.
+    """
+    _maybe_reload_weights()
     traverser, seed, n_players = args
-    return traverse(traverser, _ADV_NET, _STRAT_NET, seed, n_players)
+    return traverse(traverser, _ADV_NET, _UTIL_ENV, seed, n_players)
 
 
 # ---------------------------------------------------------------------------
@@ -138,82 +199,126 @@ def worker_task(args: tuple) -> tuple[list, list]:
 def traverse(
     traverser: int,
     adv_net: AdvantageNet,
-    strat_net: StrategyNet,
+    util_env: SkullKingEnv,
     seed: int,
     n_players: int = 4,
-) -> tuple[list, list]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray,
+           np.ndarray, np.ndarray, np.ndarray]:
     """Run one outcome-sampling CFR traversal.
 
     Parameters
     ----------
     traverser:
         The player whose regrets are updated this traversal.
-    adv_net / strat_net:
-        Network objects (built once per worker, not per traversal).
+    adv_net:
+        Advantage network (built once per worker, not per traversal).
+    util_env:
+        Pre-allocated SkullKingEnv used only for obs/mask building.
     seed:
         RNG seed for both card dealing and action sampling.
 
     Returns
     -------
-    adv_samples:
-        list of (obs, mask, adv_target, action)  — one per traverser decision
-    strat_samples:
-        list of (obs, mask, strategy)             — one per ALL players' decisions
-    """
-    # Utility env used only for obs / mask building, never stepped.
-    util_env = SkullKingEnv(n_players=n_players)
+    A tuple of 7 stacked ndarrays:
+        adv_obs, adv_masks, adv_targets, adv_actions   (traverser decisions)
+        strat_obs, strat_masks, strat_strategies       (all players' decisions)
 
+    Returning ndarrays directly (instead of Python tuple lists) lets the main
+    process write them into the replay buffer with one slice assignment per
+    field instead of millions of per-sample Python loops.
+    """
     rng = np.random.default_rng(int(seed))
     engine = GameEngine(n_players=n_players, seed=int(seed))
     state = engine.start()
 
-    traverser_history: list[tuple] = []  # (obs, mask, action, adv_est)
-    strat_samples: list[tuple] = []
+    # Collected per decision.  We keep both observations + masks + strategies
+    # for the strategy buffer, plus indices into that list for traverser-only
+    # decisions (so we don't copy obs/mask twice).
+    s_obs: list[np.ndarray] = []
+    s_masks: list[np.ndarray] = []
+    s_strats: list[np.ndarray] = []
+    # For each traverser decision we record (index_into_s_lists, action, adv_est).
+    # adv_est is needed later to compute the strategy baseline; obs/mask are
+    # shared with s_obs/s_masks (no double-copy).
+    t_indices: list[int] = []
+    t_actions: list[int] = []
+    t_adv_ests: list[np.ndarray] = []
 
     # ── Play one full game ────────────────────────────────────────────────
-    while state.phase != GamePhase.GAME_OVER:
-        p = state.current_player_index
-        completed = engine.completed_tricks_this_round
-        obs = util_env._build_observation_for(state, p, completed)
-        mask = util_env._action_masks_for(state, p)
+    # Loop reads engine internals directly via the env's fast-path methods
+    # instead of going through engine.get_state() each step — saves ~10% of
+    # CFR time by skipping FrozenPlayerState construction for every player
+    # on every move (the env methods are pure-read, single-threaded worker,
+    # safe to access mutable engine state).
+    while engine._phase != GamePhase.GAME_OVER:
+        p = engine._current_player_index()
+        obs = util_env._build_observation_from_engine(engine, p)
+        mask = util_env._action_masks_from_engine(engine, p)
 
         # Advantage network → regret matching → current strategy
         adv_est = adv_net.predict(obs, mask)
         strategy = regret_match(adv_est, mask)
 
-        strat_samples.append((obs.copy(), mask.copy(), strategy.copy()))
+        s_obs.append(obs)
+        s_masks.append(mask)
+        s_strats.append(strategy)
 
-        # Sample one action
+        # Sample one legal action.  searchsorted on cumsum is ~3-5x faster than
+        # rng.choice(arr, p=...) which validates probs and allocates per call.
         legal_idx = np.where(mask)[0]
         probs = strategy[legal_idx]
         probs = probs / probs.sum()  # guard against float rounding
-        action = int(rng.choice(legal_idx, p=probs))
+        cum = probs.cumsum()
+        r = float(rng.random())
+        idx_in_legal = int(np.searchsorted(cum, r, side="right"))
+        if idx_in_legal >= legal_idx.size:
+            idx_in_legal = legal_idx.size - 1  # guard r == 1.0 edge case
+        action = int(legal_idx[idx_in_legal])
 
         if p == traverser:
-            traverser_history.append((obs.copy(), mask.copy(), action, adv_est.copy()))
+            t_indices.append(len(s_obs) - 1)
+            t_actions.append(action)
+            t_adv_ests.append(adv_est)
 
-        # Advance game state
+        # Advance game state via the *_no_state variants — they skip the
+        # ``return self.get_state()`` step inside the engine and avoid
+        # freezing all player states every move.  Engine internals are still
+        # mutated correctly; the next loop iteration reads them directly.
         card, mode, bid = _decode_action(action)
         if bid is not None:
-            state = engine.place_bid(p, bid)
+            engine.place_bid_no_state(p, bid)
         else:
-            state = engine.play_card(p, card, mode)
+            engine.play_card_no_state(p, card, mode)
 
     # ── Compute utility for traverser ─────────────────────────────────────
-    utility = _compute_utility(state, traverser)
+    utility = _compute_utility_from_engine(engine, traverser)
 
-    # ── Compute advantage targets ──────────────────────────────────────────
-    # For each traverser decision: instantaneous regret = utility - baseline.
-    # baseline = expected value under the mixed strategy at that node.
-    adv_samples: list[tuple] = []
-    for obs, mask, action, adv_est in traverser_history:
-        strat = regret_match(adv_est, mask)
-        legal_idx = np.where(mask)[0]
-        baseline = float(np.dot(strat[legal_idx], adv_est[legal_idx]))
+    # ── Stack strategy samples (one per decision, all players) ────────────
+    n_strat = len(s_obs)
+    strat_obs = np.stack(s_obs) if n_strat else np.empty((0, util_env.observation_space.shape[0]), dtype=np.float32)
+    strat_masks = np.stack(s_masks) if n_strat else np.empty((0, ACTION_SPACE_SIZE), dtype=bool)
+    strat_strategies = np.stack(s_strats) if n_strat else np.empty((0, ACTION_SPACE_SIZE), dtype=np.float32)
 
-        adv_target = np.zeros(ACTION_SPACE_SIZE, dtype=np.float32)
-        adv_target[action] = utility - baseline
+    # ── Compute advantage targets for traverser decisions ─────────────────
+    # baseline = expected value under the regret-matched strategy at that node.
+    n_adv = len(t_indices)
+    if n_adv == 0:
+        adv_obs = np.empty((0, strat_obs.shape[1]), dtype=np.float32)
+        adv_masks = np.empty((0, ACTION_SPACE_SIZE), dtype=bool)
+        adv_targets = np.empty((0, ACTION_SPACE_SIZE), dtype=np.float32)
+        adv_actions = np.empty((0,), dtype=np.int64)
+    else:
+        adv_obs = strat_obs[t_indices]
+        adv_masks = strat_masks[t_indices]
+        adv_targets = np.zeros((n_adv, ACTION_SPACE_SIZE), dtype=np.float32)
+        adv_actions = np.array(t_actions, dtype=np.int64)
+        # Reuse the strategy we already computed (s_strats) — no second
+        # regret_match call.
+        for k, (idx, adv_est) in enumerate(zip(t_indices, t_adv_ests)):
+            strat = s_strats[idx]
+            mask_k = s_masks[idx]
+            legal_idx = np.where(mask_k)[0]
+            baseline = float(np.dot(strat[legal_idx], adv_est[legal_idx]))
+            adv_targets[k, t_actions[k]] = utility - baseline
 
-        adv_samples.append((obs, mask, adv_target, action))
-
-    return adv_samples, strat_samples
+    return adv_obs, adv_masks, adv_targets, adv_actions, strat_obs, strat_masks, strat_strategies

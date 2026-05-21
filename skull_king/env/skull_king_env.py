@@ -108,6 +108,23 @@ for _i, _c in enumerate(_CANONICAL_DECK):
     _CARD_TO_INDICES.setdefault(_c, []).append(_i)
 
 
+def _encode_cards_into(cards, out: np.ndarray) -> None:
+    """Zero ``out`` (must be length 70) and write 1.0 at each card's canonical slot.
+
+    Replaces the previous "allocate-then-copy" pattern (one fresh 70-float
+    ndarray per call) with an in-place write directly into an obs slice.
+    Saves 3 allocations per CFR observation.
+    """
+    out[:] = 0.0
+    counts: dict[Card, int] = {}
+    for card in cards:
+        counts[card] = counts.get(card, 0) + 1
+    for card, count in counts.items():
+        slots = _CARD_TO_INDICES[card]
+        for i in range(min(count, len(slots))):
+            out[slots[i]] = 1.0
+
+
 # ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
@@ -349,15 +366,9 @@ class SkullKingEnv(gym.Env):
         return float(reward)
 
     @staticmethod
-    def _encode_cards(cards: list[Card]) -> np.ndarray:
+    def _encode_cards(cards) -> np.ndarray:
         vec = np.zeros(DECK_TOTAL, dtype=np.float32)
-        counts: dict[Card, int] = {}
-        for card in cards:
-            counts[card] = counts.get(card, 0) + 1
-        for card, count in counts.items():
-            slots = _CARD_TO_INDICES[card]
-            for i in range(min(count, len(slots))):
-                vec[slots[i]] = 1.0
+        _encode_cards_into(cards, vec)
         return vec
 
     def _build_observation(self, state: GameState) -> np.ndarray:
@@ -366,6 +377,96 @@ class SkullKingEnv(gym.Env):
             self._controlled_player,
             self._engine.completed_tricks_this_round,
         )
+
+    # ------------------------------------------------------------------
+    # Fast paths for CFR worker — bypass GameState freezing
+    # ------------------------------------------------------------------
+    #
+    # The CFR traversal calls _build_observation_for and _action_masks_for
+    # ~50× per game.  Going through engine.get_state() creates a fresh
+    # FrozenPlayerState per player per call — ~10% of total CFR time was
+    # spent in that freeze.  The methods below read engine internals
+    # directly (single-thread CFR worker, no shared state, safe).
+
+    def _build_observation_from_engine(
+        self, engine: GameEngine, player_index: int
+    ) -> np.ndarray:
+        obs = np.zeros(OBS_SIZE, dtype=np.float32)
+        cp = player_index
+        ps = engine._players[cp]
+        rn = engine._round
+
+        _encode_cards_into(ps.hand, obs[0:70])
+        trick_cards = engine._current_trick.played_cards
+        _encode_cards_into([pc.card for pc in trick_cards], obs[70:140])
+
+        seen: list[Card] = []
+        for trick in engine._completed_tricks:
+            for pc in trick.played_cards:
+                seen.append(pc.card)
+        _encode_cards_into(seen, obs[140:210])
+
+        n = self.n_players
+        rn_f = float(rn)
+        for i in range(MAX_PLAYERS):
+            actual = (cp + i) % n if i < n else -1
+            bid_slot, tricks_slot = 210 + i, 216 + i
+            score_slot, revealed_slot, leader_slot = 222 + i, 228 + i, 234 + i
+
+            if actual == -1:
+                obs[bid_slot] = -1.0
+            else:
+                aps = engine._players[actual]
+                if aps.bid is not None:
+                    obs[bid_slot] = aps.bid / rn_f
+                    obs[revealed_slot] = 1.0
+                else:
+                    obs[bid_slot] = -1.0
+                obs[tricks_slot] = aps.tricks_won_this_round / rn_f
+                # Manual clip is faster than np.clip for a single scalar.
+                s = aps.total_score / 300.0
+                if s > 1.0:
+                    s = 1.0
+                elif s < -1.0:
+                    s = -1.0
+                obs[score_slot] = s
+                obs[leader_slot] = 1.0 if actual == engine._trick_leader else 0.0
+
+        obs[240] = (rn - 1) / (NUM_ROUNDS - 1)
+        obs[241] = (engine._trick_in_round - 1) / max(rn - 1, 1)
+        obs[242] = 1.0 if engine._phase == GamePhase.BIDDING else 0.0
+        obs[243] = len(trick_cards) / n
+        return obs
+
+    def _action_masks_from_engine(
+        self, engine: GameEngine, player_index: int
+    ) -> np.ndarray:
+        mask = np.zeros(ACTION_SPACE_SIZE, dtype=bool)
+        cp = player_index
+        phase = engine._phase
+
+        if phase == GamePhase.BIDDING:
+            mask[: engine._round + 1] = True
+        elif phase == GamePhase.PLAYING and engine._current_player_index() == cp:
+            hand = engine._players[cp].hand
+            legal = TrickResolver.legal_plays(
+                list(engine._current_trick.played_cards), list(hand)
+            )
+
+            counts: dict[Card, int] = {}
+            for card in legal:
+                counts[card] = counts.get(card, 0) + 1
+
+            for card, count in counts.items():
+                if card.card_type == CardType.TIGRESS:
+                    mask[TIGRESS_AS_ESCAPE_ACTION] = True
+                    mask[TIGRESS_AS_PIRATE_ACTION] = True
+                else:
+                    slots = _CARD_TO_INDICES[card]
+                    for i in range(min(count, len(slots))):
+                        mask[N_BID_ACTIONS + slots[i]] = True
+
+        return mask
 
     def _build_observation_for(
         self,
