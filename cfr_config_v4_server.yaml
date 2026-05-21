@@ -1,21 +1,22 @@
-# Deep CFR v4 — optimized server config (Linux, 44-worker fork, per-iteration pool)
+# Deep CFR v4 — optimized server config (Linux, 44-worker persistent pool)
 # Run: python3 -m skull_king.training.cfr.train --config cfr_config_v4_server.yaml
 #
-# Key improvements vs v2_server:
-#   - Advantage buffer never cleared (main fix — was root cause of v3_pc collapse)
-#   - Per-iteration fork pool: no IPC weight-broadcast overhead (persistent pool
-#     was sending ~500 MB/iter to 44 workers via pipes — that caused 4 min/iter)
-#   - 2x more traversals: richer advantage samples per iteration
-#   - Fixed gradient steps: predictable wall-clock cost per iteration
+# Perf fixes vs previous attempts:
+#   - Persistent pool (created once before buffers fill) eliminates ~50s/iter
+#     COW page-table fork cost that hit once buffers reached 8 GB of dirty data
+#   - torch.set_num_threads(8) in main process: cuts adv+strat training from
+#     ~14s to ~3s/iter (28 threads was overkill for [512,512] batch-1024 matmuls)
+#   - 200 traversals/player (same as v2_server) — buffer accumulation makes up
+#     for fewer fresh samples; circular buffer slides over last ~19 iterations
 #
-# Expected runtime: ~4-6h on a 44-core Linux server
+# Expected runtime: ~10-12s/iter → ~4-5h for 1500 iterations
 
 n_players: 4
 env_seed: 42
 
-# 1500 iters x 400 traversals x 4 players = 2.4M game simulations
+# 1500 iters x 200 traversals x 4 players = 1.2M game simulations
 n_cfr_iterations: 1500
-traversals_per_player: 400
+traversals_per_player: 200
 num_workers: 44
 
 net_hidden: [512, 512]

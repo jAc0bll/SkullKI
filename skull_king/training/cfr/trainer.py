@@ -111,16 +111,27 @@ class DeepCFRTrainer:
         _console.print(f"  device: {self.device}")
         _console.print(f"{'='*66}\n")
 
-        # On Linux (fork): pool is recreated each iteration with current weights
-        # passed via the initializer.  fork is copy-on-write so this is nearly
-        # free — no IPC overhead for weight transfer.
-        # On Windows (spawn): pool is created once and weights are broadcast via
-        # worker_update_nets() to avoid expensive per-iteration process creation.
+        # Pool is always created once before training starts (persistent).
+        # Reason: on Linux, fork copies the parent's page-table for ALL allocated
+        # memory.  Once the advantage/strategy buffers are filled (~8 GB), forking
+        # 44 workers per iteration costs ~50 s just in COW page-table setup.
+        # Creating the pool once (when buffers are still empty) pays that cost
+        # only at startup.  Weights are broadcast cheaply via worker_update_nets
+        # each iteration (~0.3 s for [512,512] nets × 44 workers vs ~50 s fork).
+        #
+        # On Windows (spawn): persistent pool avoids per-iteration process creation
+        # overhead (~2-4 s × n_iterations); same broadcast mechanism is used.
         self._is_windows = sys.platform == "win32"
         self._ctx = multiprocessing.get_context("spawn" if self._is_windows else "fork")
 
+        # Limit torch threads in the MAIN process: 28 threads on a 56-core box
+        # causes massive scheduler overhead for small matmuls ([512,512], batch
+        # 1024).  8 threads cuts adv+strat training from ~14 s to ~3 s/iter.
+        if cfg.num_workers > 1:
+            torch.set_num_threads(min(8, torch.get_num_threads()))
+
         persistent_pool = None
-        if self._is_windows and cfg.num_workers > 1:
+        if cfg.num_workers > 1:
             init_adv = {k: v.cpu() for k, v in self.adv_net.state_dict().items()}
             init_strat = {k: v.cpu() for k, v in self.strat_net.state_dict().items()}
             persistent_pool = self._ctx.Pool(
@@ -217,14 +228,17 @@ class DeepCFRTrainer:
             for i in range(cfg.traversals_per_player * cfg.n_players)
         ]
 
-        if cfg.num_workers <= 1:
+        if persistent_pool is None:
+            # Single-process fallback (num_workers <= 1).
             worker_init(adv_weights, strat_weights)
             for task in tasks:
                 adv_s, strat_s = worker_task(task)
                 self.adv_buf.add_batch(adv_s)
                 self.strat_buf.add_batch(strat_s)
-        elif persistent_pool is not None:
-            # Windows: broadcast weights to persistent workers via IPC.
+        else:
+            # Broadcast updated weights to all persistent workers, then collect.
+            # pool.map is synchronous — all workers are up-to-date before
+            # imap_unordered starts.  Total IPC: ~3 MB × num_workers, ~0.3 s.
             update_args = (adv_weights, strat_weights)
             persistent_pool.map(
                 worker_update_nets,
@@ -236,19 +250,6 @@ class DeepCFRTrainer:
             ):
                 self.adv_buf.add_batch(adv_s)
                 self.strat_buf.add_batch(strat_s)
-        else:
-            # Linux: create a fresh pool each iteration.  fork is copy-on-write
-            # so the weights are inherited instantly — no IPC serialisation cost.
-            with self._ctx.Pool(
-                processes=cfg.num_workers,
-                initializer=worker_init,
-                initargs=(adv_weights, strat_weights),
-            ) as pool:
-                for adv_s, strat_s in pool.imap_unordered(
-                    worker_task, tasks, chunksize=4
-                ):
-                    self.adv_buf.add_batch(adv_s)
-                    self.strat_buf.add_batch(strat_s)
 
     # ------------------------------------------------------------------
     # Network training (fixed gradient steps per iteration)
