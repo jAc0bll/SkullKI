@@ -45,7 +45,7 @@ class AdvantageBuffer:
         self, batch_size: int
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         n = min(batch_size, self._size)
-        idx = np.random.choice(self._size, n, replace=False)
+        idx = np.random.randint(0, self._size, size=n)  # O(n), not O(buffer_size)
         return (
             self._obs[idx],
             self._masks[idx],
@@ -97,7 +97,7 @@ class StrategyBuffer:
         self, batch_size: int
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         n = min(batch_size, self._size)
-        idx = np.random.choice(self._size, n, replace=False)
+        idx = np.random.randint(0, self._size, size=n)  # O(n), not O(buffer_size)
         return self._obs[idx], self._masks[idx], self._strategies[idx]
 
     def __len__(self) -> int:
