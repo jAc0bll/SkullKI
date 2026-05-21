@@ -75,6 +75,25 @@ _ADV_NET: Optional[AdvantageNet] = None
 _STRAT_NET: Optional[StrategyNet] = None
 
 
+def _hidden_from_weights(weights: dict) -> tuple[int, ...]:
+    """Infer MLP hidden layer sizes from a state dict.
+
+    Layer pattern: net.0.weight [h1, in], net.2.weight [h2, h1], net.4.weight [out, h2].
+    All layers except the last are hidden layers.
+    """
+    hidden = []
+    i = 0
+    while True:
+        key = f"net.{i * 2}.weight"
+        next_key = f"net.{(i + 1) * 2}.weight"
+        if key not in weights:
+            break
+        if next_key in weights:  # not the output layer
+            hidden.append(weights[key].shape[0])
+        i += 1
+    return tuple(hidden)
+
+
 def worker_init(adv_weights: dict, strat_weights: dict) -> None:
     """Called once per worker process: build networks and load weights."""
     import torch
@@ -82,10 +101,11 @@ def worker_init(adv_weights: dict, strat_weights: dict) -> None:
     # Force single-threaded torch to avoid deadlock on any linear layer call.
     torch.set_num_threads(1)
     global _ADV_NET, _STRAT_NET
-    _ADV_NET = AdvantageNet()
+    hidden = _hidden_from_weights(adv_weights)
+    _ADV_NET = AdvantageNet(hidden=hidden)
     _ADV_NET.load_state_dict(adv_weights)
     _ADV_NET.eval()
-    _STRAT_NET = StrategyNet()
+    _STRAT_NET = StrategyNet(hidden=hidden)
     _STRAT_NET.load_state_dict(strat_weights)
     _STRAT_NET.eval()
 
