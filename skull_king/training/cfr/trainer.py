@@ -32,6 +32,20 @@ if TYPE_CHECKING:
 _console = Console(highlight=False)
 
 
+def _pick_device() -> torch.device:
+    """Prefer CUDA > DirectML (AMD/Intel on Windows) > CPU."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    try:
+        import torch_directml  # type: ignore[import]
+        dev = torch_directml.device()
+        _console.print(f"  [GPU] Using DirectML device: {torch_directml.device_name(0)}")
+        return dev
+    except (ImportError, Exception):
+        pass
+    return torch.device("cpu")
+
+
 class DeepCFRTrainer:
     """Orchestrates iterative Deep CFR training.
 
@@ -64,7 +78,7 @@ class DeepCFRTrainer:
 
     def __init__(self, cfg: "CFRConfig") -> None:
         self.cfg = cfg
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = _pick_device()
 
         hidden = tuple(cfg.net_hidden)
         self.adv_net = AdvantageNet(hidden=hidden).to(self.device)
