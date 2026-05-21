@@ -107,22 +107,40 @@ _CARD_TO_INDICES: dict[Card, list[int]] = {}
 for _i, _c in enumerate(_CANONICAL_DECK):
     _CARD_TO_INDICES.setdefault(_c, []).append(_i)
 
+# Flat tuple lookup indexed by Card._hash (the cached int hash value, 0..60).
+# Each entry is a tuple of canonical slot indices for that equality class —
+# e.g. Pirate (hash=57) maps to (61, 62, 63, 64, 65).  Looking up slots by
+# integer hash is faster than ``dict[Card, list]`` lookup (no Card.__hash__
+# call, no bucket walk for collisions).
+_HASH_TO_SLOTS: tuple[tuple[int, ...], ...]
+_max_hash = max(c._hash for c in _CARD_TO_INDICES) + 1
+_temp = [()] * _max_hash
+for _c, _slots in _CARD_TO_INDICES.items():
+    _temp[_c._hash] = tuple(_slots)
+_HASH_TO_SLOTS = tuple(_temp)
+del _temp, _max_hash
+
 
 def _encode_cards_into(cards, out: np.ndarray) -> None:
     """Zero ``out`` (must be length 70) and write 1.0 at each card's canonical slot.
 
-    Replaces the previous "allocate-then-copy" pattern (one fresh 70-float
-    ndarray per call) with an in-place write directly into an obs slice.
-    Saves 3 allocations per CFR observation.
+    Hot path called ~150k times per CFR iteration.  Optimisations vs naive:
+      * Single pass through ``cards`` (was: count → iterate counts twice).
+      * Integer-keyed lookups against the precomputed ``_HASH_TO_SLOTS`` tuple
+        instead of ``dict[Card, list]`` — saves a Card.__hash__ call and the
+        dict bucket walk for every card.
+      * ``bytearray(61)`` counter (zero-init in O(1)) instead of ``dict``.
     """
     out[:] = 0.0
-    counts: dict[Card, int] = {}
+    counters = bytearray(len(_HASH_TO_SLOTS))  # zeroed per call, O(1) alloc
+    hash_to_slots = _HASH_TO_SLOTS              # local binding — faster lookup
     for card in cards:
-        counts[card] = counts.get(card, 0) + 1
-    for card, count in counts.items():
-        slots = _CARD_TO_INDICES[card]
-        for i in range(min(count, len(slots))):
-            out[slots[i]] = 1.0
+        h = card._hash
+        slots = hash_to_slots[h]
+        cnt = counters[h]
+        if cnt < len(slots):
+            out[slots[cnt]] = 1.0
+            counters[h] = cnt + 1
 
 
 # ---------------------------------------------------------------------------
@@ -391,50 +409,65 @@ class SkullKingEnv(gym.Env):
     def _build_observation_from_engine(
         self, engine: GameEngine, player_index: int
     ) -> np.ndarray:
+        # Local bindings of engine internals — each one saves a Python
+        # LOAD_ATTR instruction per access.  The per-player loop hits
+        # engine._players up to 6 times, players, rounds & trick_leader once
+        # each per iteration of that loop.
+        players = engine._players
+        rn = engine._round
+        completed = engine._completed_tricks
+        current_trick = engine._current_trick
+        trick_leader = engine._trick_leader
+        phase = engine._phase
+        trick_in_round = engine._trick_in_round
+
         obs = np.zeros(OBS_SIZE, dtype=np.float32)
         cp = player_index
-        ps = engine._players[cp]
-        rn = engine._round
+        ps = players[cp]
 
         _encode_cards_into(ps.hand, obs[0:70])
-        trick_cards = engine._current_trick.played_cards
+        trick_cards = current_trick.played_cards
         _encode_cards_into([pc.card for pc in trick_cards], obs[70:140])
 
+        # Pre-size the seen list — avoids amortised list-grow allocations
+        # (4 trick.played_cards × up to 9 completed tricks per round).
         seen: list[Card] = []
-        for trick in engine._completed_tricks:
+        seen_append = seen.append
+        for trick in completed:
             for pc in trick.played_cards:
-                seen.append(pc.card)
+                seen_append(pc.card)
         _encode_cards_into(seen, obs[140:210])
 
         n = self.n_players
         rn_f = float(rn)
-        for i in range(MAX_PLAYERS):
-            actual = (cp + i) % n if i < n else -1
-            bid_slot, tricks_slot = 210 + i, 216 + i
-            score_slot, revealed_slot, leader_slot = 222 + i, 228 + i, 234 + i
-
-            if actual == -1:
-                obs[bid_slot] = -1.0
+        # Flatten the MAX_PLAYERS loop: the i ≥ n branch sets only one slot to
+        # -1, so handle it in two phases instead of a conditional per iter.
+        for i in range(n):
+            actual = (cp + i) % n
+            aps = players[actual]
+            bid = aps.bid
+            if bid is None:
+                obs[210 + i] = -1.0
             else:
-                aps = engine._players[actual]
-                if aps.bid is not None:
-                    obs[bid_slot] = aps.bid / rn_f
-                    obs[revealed_slot] = 1.0
-                else:
-                    obs[bid_slot] = -1.0
-                obs[tricks_slot] = aps.tricks_won_this_round / rn_f
-                # Manual clip is faster than np.clip for a single scalar.
-                s = aps.total_score / 300.0
-                if s > 1.0:
-                    s = 1.0
-                elif s < -1.0:
-                    s = -1.0
-                obs[score_slot] = s
-                obs[leader_slot] = 1.0 if actual == engine._trick_leader else 0.0
+                obs[210 + i] = bid / rn_f
+                obs[228 + i] = 1.0
+            obs[216 + i] = aps.tricks_won_this_round / rn_f
+            # Manual clip is faster than np.clip for a single scalar.
+            s = aps.total_score / 300.0
+            if s > 1.0:
+                s = 1.0
+            elif s < -1.0:
+                s = -1.0
+            obs[222 + i] = s
+            if actual == trick_leader:
+                obs[234 + i] = 1.0
+        # Inactive seats: bid slot stays at -1.0, all others remain at 0.0.
+        for i in range(n, MAX_PLAYERS):
+            obs[210 + i] = -1.0
 
         obs[240] = (rn - 1) / (NUM_ROUNDS - 1)
-        obs[241] = (engine._trick_in_round - 1) / max(rn - 1, 1)
-        obs[242] = 1.0 if engine._phase == GamePhase.BIDDING else 0.0
+        obs[241] = (trick_in_round - 1) / max(rn - 1, 1)
+        obs[242] = 1.0 if phase == GamePhase.BIDDING else 0.0
         obs[243] = len(trick_cards) / n
         return obs
 
