@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -23,7 +24,7 @@ from skull_king.agents import HeuristicAgent, RandomAgent
 from skull_king.tournament.runner import TournamentRunner
 from skull_king.training.cfr.buffers import AdvantageBuffer, StrategyBuffer
 from skull_king.training.cfr.networks import AdvantageNet, StrategyNet
-from skull_king.training.cfr.traversal import worker_init, worker_task
+from skull_king.training.cfr.traversal import worker_init, worker_task, worker_update_nets
 
 if TYPE_CHECKING:
     from skull_king.training.cfr.train import CFRConfig
@@ -35,12 +36,30 @@ class DeepCFRTrainer:
     """Orchestrates iterative Deep CFR training.
 
     Each iteration:
-      1. Run ``traversals_per_player × n_players`` game traversals in parallel.
-         Workers use cached network weights; results are collected as training
-         samples for the advantage and strategy buffers.
-      2. Train AdvantageNet  (MSE on taken-action regret targets).
-      3. Train StrategyNet   (cross-entropy on regret-matched strategy targets).
-      4. Evaluate and checkpoint periodically.
+      1. Broadcast updated network weights to the persistent worker pool.
+      2. Run ``traversals_per_player × n_players`` game traversals in parallel.
+         Advantage samples accumulate across iterations (never cleared) so the
+         advantage net always has a rich training set.  Strategy samples also
+         accumulate (standard Deep CFR average-strategy approximation).
+      3. Warm-start the AdvantageNet optimizer (reset momentum only) and train
+         for ``adv_train_steps`` gradient steps.
+      4. Train StrategyNet for ``strat_train_steps`` gradient steps.
+      5. Evaluate and checkpoint periodically.
+
+    Why accumulated advantage buffer?
+        Deep CFR requires the advantage net to fit the regret function for the
+        current strategy.  With only ~50-200k new samples per iteration the net
+        can barely generalise.  Accumulating samples gives millions of training
+        points by iteration ~30, enabling stable advantage estimates.  Samples
+        from older iterations are slightly stale but still useful: strategies
+        change slowly between consecutive iterations, so the advantage landscape
+        does not shift drastically.  The circular buffer automatically evicts the
+        oldest data once capacity is reached.
+
+    Why ``adv_train_steps`` instead of epochs?
+        Epoch-based training ties cost to buffer size.  Fixed steps give
+        predictable per-iteration wall-clock time and let you tune the
+        training budget independently of the buffer size.
     """
 
     def __init__(self, cfg: "CFRConfig") -> None:
@@ -78,82 +97,101 @@ class DeepCFRTrainer:
         _console.print(f"  device: {self.device}")
         _console.print(f"{'='*66}\n")
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TextColumn("[cyan]{task.fields[metrics]}"),
-            TimeRemainingColumn(),
-            console=_console,
-            refresh_per_second=4,
-        ) as progress:
-            task = progress.add_task(
-                "CFR Training",
-                total=cfg.n_cfr_iterations,
-                metrics="",
+        ctx = multiprocessing.get_context("spawn" if sys.platform == "win32" else "fork")
+
+        init_adv = {k: v.cpu() for k, v in self.adv_net.state_dict().items()}
+        init_strat = {k: v.cpu() for k, v in self.strat_net.state_dict().items()}
+
+        pool = None
+        if cfg.num_workers > 1:
+            # Create pool once — workers stay alive for the whole run.
+            # On Windows (spawn) this eliminates per-iteration process-creation
+            # overhead (~2-4 s × n_iterations that would otherwise be wasted).
+            pool = ctx.Pool(
+                processes=cfg.num_workers,
+                initializer=worker_init,
+                initargs=(init_adv, init_strat),
             )
 
-            for t in range(1, cfg.n_cfr_iterations + 1):
-                t0 = time.time()
-
-                # Deep CFR paper §4: fresh advantage net each iteration so stale
-                # regret estimates from old strategies don't corrupt training.
-                self._reset_adv()
-                self._collect(t)
-                adv_loss = self._train_adv()
-                strat_loss = self._train_strat()
-
-                elapsed = time.time() - t0
-                progress.update(
-                    task,
-                    advance=1,
-                    metrics=(
-                        f"adv={adv_loss:.4f}  strat={strat_loss:.4f}"
-                        f"  buf={len(self.adv_buf):,}  {elapsed:.1f}s/it"
-                    ),
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TextColumn("[cyan]{task.fields[metrics]}"),
+                TimeRemainingColumn(),
+                console=_console,
+                refresh_per_second=4,
+            ) as progress:
+                task = progress.add_task(
+                    "CFR Training",
+                    total=cfg.n_cfr_iterations,
+                    metrics="",
                 )
 
-                if t % cfg.eval_every_n_iters == 0:
-                    progress.print("")
-                    self._evaluate(t, progress)
+                for t in range(1, cfg.n_cfr_iterations + 1):
+                    t0 = time.time()
 
-                if t % cfg.checkpoint_every_n_iters == 0:
-                    path = os.path.join(cfg.model_dir, f"{cfg.run_name}_iter{t}")
-                    self._save(path)
-                    progress.print(f"  [Checkpoint] -> {path}_{{adv,strat}}.pt")
+                    self._reset_adv()
+                    self._collect(t, pool)
+                    adv_loss = self._train_adv()
+                    strat_loss = self._train_strat()
+
+                    elapsed = time.time() - t0
+                    progress.update(
+                        task,
+                        advance=1,
+                        metrics=(
+                            f"adv={adv_loss:.4f}  strat={strat_loss:.4f}"
+                            f"  buf={len(self.adv_buf):,}  {elapsed:.1f}s/it"
+                        ),
+                    )
+
+                    if t % cfg.eval_every_n_iters == 0:
+                        progress.print("")
+                        self._evaluate(t, progress)
+
+                    if t % cfg.checkpoint_every_n_iters == 0:
+                        path = os.path.join(cfg.model_dir, f"{cfg.run_name}_iter{t}")
+                        self._save(path)
+                        progress.print(f"  [Checkpoint] -> {path}_{{adv,strat}}.pt")
+        finally:
+            if pool is not None:
+                pool.close()
+                pool.join()
 
         final = os.path.join(cfg.model_dir, "cfr_final")
         self._save(final)
         _console.print(f"\nTraining complete. Saved -> {final}_{{adv,strat}}.pt")
 
     # ------------------------------------------------------------------
-    # Advantage buffer cycle (per-iteration refresh)
+    # Advantage net reset (warm-start only — buffer is kept)
     # ------------------------------------------------------------------
 
     def _reset_adv(self) -> None:
-        """Clear the advantage buffer and reset the optimizer each iteration.
+        """Reset optimizer momentum; keep network weights and advantage buffer.
 
-        Buffer clear: removes stale regret targets computed under old strategies.
-        Optimizer reset: drops accumulated momentum so the warm-started weights
-        adapt cleanly to the new samples without gradient artifacts.
-        Network weights are kept (warm start) — re-initialising to random and
-        training for only a few dozen steps leaves the net near-random, which
-        makes all strategies uniform and collapses the strategy net.
+        Optimizer reset: drops accumulated Adam momentum so the warm-started
+        weights adapt cleanly to the new iteration's samples.
+
+        Buffer intentionally NOT cleared: with ~50-200k new samples per
+        iteration, clearing would starve the advantage net.  Accumulated
+        samples across iterations give millions of training points by
+        iteration ~30, enabling stable advantage estimates.  Circular-buffer
+        eviction naturally discards the oldest (most-stale) data.
         """
         self.adv_opt = torch.optim.Adam(self.adv_net.parameters(), lr=self.cfg.adv_lr)
-        self.adv_buf.clear()
 
     # ------------------------------------------------------------------
     # Traversal collection
     # ------------------------------------------------------------------
 
-    def _collect(self, iteration: int) -> None:
+    def _collect(self, iteration: int, pool) -> None:
         cfg = self.cfg
         adv_weights = {k: v.cpu() for k, v in self.adv_net.state_dict().items()}
         strat_weights = {k: v.cpu() for k, v in self.strat_net.state_dict().items()}
 
-        # Each task: (traverser_player, seed, n_players)
         tasks = [
             (
                 i % cfg.n_players,
@@ -163,31 +201,30 @@ class DeepCFRTrainer:
             for i in range(cfg.traversals_per_player * cfg.n_players)
         ]
 
-        if cfg.num_workers <= 1:
-            # Single-process fallback (Windows dev / smoke test)
+        if pool is None:
             worker_init(adv_weights, strat_weights)
             for task in tasks:
                 adv_s, strat_s = worker_task(task)
                 self.adv_buf.add_batch(adv_s)
                 self.strat_buf.add_batch(strat_s)
         else:
-            # Parallel: weights are sent ONCE per worker via initializer.
-            # fork is instant on Linux (no re-import); spawn is required on Windows.
-            import sys
-            ctx = multiprocessing.get_context("spawn" if sys.platform == "win32" else "fork")
-            with ctx.Pool(
-                processes=cfg.num_workers,
-                initializer=worker_init,
-                initargs=(adv_weights, strat_weights),
-            ) as pool:
-                for adv_s, strat_s in pool.imap_unordered(
-                    worker_task, tasks, chunksize=4
-                ):
-                    self.adv_buf.add_batch(adv_s)
-                    self.strat_buf.add_batch(strat_s)
+            # Broadcast updated weights to all persistent workers before
+            # running traversals.  pool.map is synchronous so all workers
+            # are up-to-date before imap_unordered starts.
+            update_args = (adv_weights, strat_weights)
+            pool.map(
+                worker_update_nets,
+                [update_args] * cfg.num_workers,
+                chunksize=1,
+            )
+            for adv_s, strat_s in pool.imap_unordered(
+                worker_task, tasks, chunksize=4
+            ):
+                self.adv_buf.add_batch(adv_s)
+                self.strat_buf.add_batch(strat_s)
 
     # ------------------------------------------------------------------
-    # Network training
+    # Network training (fixed gradient steps per iteration)
     # ------------------------------------------------------------------
 
     def _train_adv(self) -> float:
@@ -196,13 +233,13 @@ class DeepCFRTrainer:
             return 0.0
         self.adv_net.train()
         total = 0.0
-        for _ in range(cfg.adv_train_epochs):
+        for _ in range(cfg.adv_train_steps):
             obs, _, targets, actions = self.adv_buf.sample(cfg.adv_batch_size)
             obs_t = torch.FloatTensor(obs).to(self.device)
             targets_t = torch.FloatTensor(targets).to(self.device)
             actions_t = torch.LongTensor(actions).to(self.device)
 
-            pred = self.adv_net(obs_t)                              # [B, 82]
+            pred = self.adv_net(obs_t)                              # [B, n_actions]
             taken_pred = pred.gather(1, actions_t.unsqueeze(1)).squeeze(1)
             taken_tgt = targets_t.gather(1, actions_t.unsqueeze(1)).squeeze(1)
             loss = nn.functional.mse_loss(taken_pred, taken_tgt)
@@ -213,7 +250,7 @@ class DeepCFRTrainer:
             self.adv_opt.step()
             total += loss.item()
         self.adv_net.eval()
-        return total / cfg.adv_train_epochs
+        return total / cfg.adv_train_steps
 
     def _train_strat(self) -> float:
         cfg = self.cfg
@@ -221,7 +258,7 @@ class DeepCFRTrainer:
             return 0.0
         self.strat_net.train()
         total = 0.0
-        for _ in range(cfg.strat_train_epochs):
+        for _ in range(cfg.strat_train_steps):
             obs, masks, strategies = self.strat_buf.sample(cfg.strat_batch_size)
             obs_t = torch.FloatTensor(obs).to(self.device)
             mask_t = torch.BoolTensor(masks).to(self.device)
@@ -240,7 +277,7 @@ class DeepCFRTrainer:
             self.strat_opt.step()
             total += loss.item()
         self.strat_net.eval()
-        return total / cfg.strat_train_epochs
+        return total / cfg.strat_train_steps
 
     # ------------------------------------------------------------------
     # Evaluation + persistence
@@ -251,14 +288,16 @@ class DeepCFRTrainer:
         n = self.cfg.n_players
         agent = CFRAgent(self.strat_net, n_players=n, name="CFR")
         runner = TournamentRunner(seed=999)
-        r_r = runner.run([agent] + [RandomAgent(i) for i in range(n - 1)], n_games=50)
-        r_h = runner.run([agent] + [HeuristicAgent() for _ in range(n - 1)], n_games=50)
+        r_r = runner.run([agent] + [RandomAgent(i) for i in range(n - 1)], n_games=100)
+        r_h = runner.run([agent] + [HeuristicAgent() for _ in range(n - 1)], n_games=100)
         wr_r = r_r.win_rates().get("CFR", 0.0)
         wr_h = r_h.win_rates().get("CFR", 0.0)
+        avg_r = r_r.avg_scores().get("CFR", 0.0)
         avg_h = r_h.avg_scores().get("CFR", 0.0)
         msg = (
-            f"  [Eval iter={t}]  vs_random={wr_r:.1%}  "
-            f"vs_heuristic={wr_h:.1%}  avg_score_H={avg_h:+.0f}"
+            f"  [Eval iter={t}]"
+            f"  vs_random={wr_r:.1%} ({avg_r:+.0f})"
+            f"  vs_heuristic={wr_h:.1%} ({avg_h:+.0f})"
         )
         if progress is not None:
             progress.print(msg)

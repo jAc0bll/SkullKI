@@ -90,6 +90,21 @@ def worker_init(adv_weights: dict, strat_weights: dict) -> None:
     _STRAT_NET.eval()
 
 
+def worker_update_nets(args: tuple) -> None:
+    """Broadcast updated network weights to a persistent worker.
+
+    Called via pool.map at the start of each iteration so the persistent
+    pool does not need to be torn down and respawned just to push new weights.
+    Each worker receives exactly one call (map distributes N tasks to N workers).
+    """
+    import torch
+    adv_weights, strat_weights = args
+    if _ADV_NET is not None:
+        _ADV_NET.load_state_dict(adv_weights)
+    if _STRAT_NET is not None:
+        _STRAT_NET.load_state_dict(strat_weights)
+
+
 def worker_task(args: tuple) -> tuple[list, list]:
     """Unpack args and run one traversal using cached network objects."""
     traverser, seed, n_players = args

@@ -1,0 +1,35 @@
+# Deep CFR v4 — optimized server config (Linux, 44-worker fork, persistent pool)
+# Run: python -m skull_king.training.cfr.train --config cfr_config_v4_server.yaml
+#
+# Key improvements vs v2_server:
+#   - Larger network [1024, 1024] — more capacity for complex strategies
+#   - 2x more traversals per iteration — richer, more diverse advantage samples
+#   - Fixed gradient steps — trains advantage net properly on large accumulated buffer
+#   - Persistent pool — fast fork, no overhead either way but cleaner
+#
+# Expected runtime: ~8-12h on a 44-core Linux server
+
+n_players: 4
+env_seed: 42
+
+# 2000 iters x 800 traversals x 4 players = 6.4M game simulations
+n_cfr_iterations: 2000
+traversals_per_player: 800
+num_workers: 44
+
+net_hidden: [1024, 1024]
+
+adv_lr: 3.0e-4
+adv_batch_size: 2048
+adv_train_steps: 1000         # gradient steps per iteration
+adv_buffer_capacity: 4_000_000
+
+strat_lr: 3.0e-4
+strat_batch_size: 2048
+strat_train_steps: 1000
+strat_buffer_capacity: 8_000_000
+
+eval_every_n_iters: 100
+checkpoint_every_n_iters: 200
+model_dir: models/skull_king
+run_name: cfr_v4_server

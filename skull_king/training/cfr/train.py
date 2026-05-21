@@ -2,17 +2,13 @@
 
 Usage
 -----
-    python -m skull_king.training.cfr.train                       # cfr_config.yaml
-    python -m skull_king.training.cfr.train --config cfr_config_server.yaml
+    python -m skull_king.training.cfr.train                         # cfr_config.yaml
+    python -m skull_king.training.cfr.train --config cfr_config_v4_pc.yaml
 
 Output
 ------
     models/skull_king/cfr_final_adv.pt    — advantage network (training only)
     models/skull_king/cfr_final_strat.pt  — strategy network  (use for play)
-
-Evaluate the trained model
---------------------------
-    python -m skull_king.training.cfr.eval
 """
 from __future__ import annotations
 
@@ -40,14 +36,14 @@ class CFRConfig:
 
     # Advantage network training
     adv_lr: float = 1e-3
-    adv_batch_size: int = 512
-    adv_train_epochs: int = 5
+    adv_batch_size: int = 1024
+    adv_train_steps: int = 500         # gradient steps per iteration (fixed budget)
     adv_buffer_capacity: int = 2_000_000
 
     # Strategy network training
     strat_lr: float = 1e-3
-    strat_batch_size: int = 512
-    strat_train_epochs: int = 5
+    strat_batch_size: int = 1024
+    strat_train_steps: int = 500       # gradient steps per iteration (fixed budget)
     strat_buffer_capacity: int = 2_000_000
 
     # Logging / output
@@ -55,6 +51,10 @@ class CFRConfig:
     checkpoint_every_n_iters: int = 100
     model_dir: str = "models/skull_king"
     run_name: str = "cfr_v1"
+
+    # --- backward compat: old epoch-based keys are silently ignored ---
+    adv_train_epochs: int = 0
+    strat_train_epochs: int = 0
 
 
 def load_config(path: str) -> CFRConfig:
@@ -64,6 +64,12 @@ def load_config(path: str) -> CFRConfig:
     for k, v in raw.items():
         if hasattr(cfg, k):
             setattr(cfg, k, v)
+    # Backward compat: if old epoch keys used but new step keys not set,
+    # convert epochs → rough step count (epochs × ~500 steps/epoch).
+    if cfg.adv_train_steps == 500 and cfg.adv_train_epochs > 0:
+        cfg.adv_train_steps = cfg.adv_train_epochs * 500
+    if cfg.strat_train_steps == 500 and cfg.strat_train_epochs > 0:
+        cfg.strat_train_steps = cfg.strat_train_epochs * 500
     return cfg
 
 
