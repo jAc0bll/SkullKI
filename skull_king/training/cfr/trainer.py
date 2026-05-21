@@ -111,17 +111,19 @@ class DeepCFRTrainer:
         _console.print(f"  device: {self.device}")
         _console.print(f"{'='*66}\n")
 
-        ctx = multiprocessing.get_context("spawn" if sys.platform == "win32" else "fork")
+        # On Linux (fork): pool is recreated each iteration with current weights
+        # passed via the initializer.  fork is copy-on-write so this is nearly
+        # free — no IPC overhead for weight transfer.
+        # On Windows (spawn): pool is created once and weights are broadcast via
+        # worker_update_nets() to avoid expensive per-iteration process creation.
+        self._is_windows = sys.platform == "win32"
+        self._ctx = multiprocessing.get_context("spawn" if self._is_windows else "fork")
 
-        init_adv = {k: v.cpu() for k, v in self.adv_net.state_dict().items()}
-        init_strat = {k: v.cpu() for k, v in self.strat_net.state_dict().items()}
-
-        pool = None
-        if cfg.num_workers > 1:
-            # Create pool once — workers stay alive for the whole run.
-            # On Windows (spawn) this eliminates per-iteration process-creation
-            # overhead (~2-4 s × n_iterations that would otherwise be wasted).
-            pool = ctx.Pool(
+        persistent_pool = None
+        if self._is_windows and cfg.num_workers > 1:
+            init_adv = {k: v.cpu() for k, v in self.adv_net.state_dict().items()}
+            init_strat = {k: v.cpu() for k, v in self.strat_net.state_dict().items()}
+            persistent_pool = self._ctx.Pool(
                 processes=cfg.num_workers,
                 initializer=worker_init,
                 initargs=(init_adv, init_strat),
@@ -148,7 +150,7 @@ class DeepCFRTrainer:
                     t0 = time.time()
 
                     self._reset_adv()
-                    self._collect(t, pool)
+                    self._collect(t, persistent_pool)
                     adv_loss = self._train_adv()
                     strat_loss = self._train_strat()
 
@@ -171,9 +173,9 @@ class DeepCFRTrainer:
                         self._save(path)
                         progress.print(f"  [Checkpoint] -> {path}_{{adv,strat}}.pt")
         finally:
-            if pool is not None:
-                pool.close()
-                pool.join()
+            if persistent_pool is not None:
+                persistent_pool.close()
+                persistent_pool.join()
 
         final = os.path.join(cfg.model_dir, "cfr_final")
         self._save(final)
@@ -201,7 +203,7 @@ class DeepCFRTrainer:
     # Traversal collection
     # ------------------------------------------------------------------
 
-    def _collect(self, iteration: int, pool) -> None:
+    def _collect(self, iteration: int, persistent_pool) -> None:
         cfg = self.cfg
         adv_weights = {k: v.cpu() for k, v in self.adv_net.state_dict().items()}
         strat_weights = {k: v.cpu() for k, v in self.strat_net.state_dict().items()}
@@ -215,27 +217,38 @@ class DeepCFRTrainer:
             for i in range(cfg.traversals_per_player * cfg.n_players)
         ]
 
-        if pool is None:
+        if cfg.num_workers <= 1:
             worker_init(adv_weights, strat_weights)
             for task in tasks:
                 adv_s, strat_s = worker_task(task)
                 self.adv_buf.add_batch(adv_s)
                 self.strat_buf.add_batch(strat_s)
-        else:
-            # Broadcast updated weights to all persistent workers before
-            # running traversals.  pool.map is synchronous so all workers
-            # are up-to-date before imap_unordered starts.
+        elif persistent_pool is not None:
+            # Windows: broadcast weights to persistent workers via IPC.
             update_args = (adv_weights, strat_weights)
-            pool.map(
+            persistent_pool.map(
                 worker_update_nets,
                 [update_args] * cfg.num_workers,
                 chunksize=1,
             )
-            for adv_s, strat_s in pool.imap_unordered(
+            for adv_s, strat_s in persistent_pool.imap_unordered(
                 worker_task, tasks, chunksize=4
             ):
                 self.adv_buf.add_batch(adv_s)
                 self.strat_buf.add_batch(strat_s)
+        else:
+            # Linux: create a fresh pool each iteration.  fork is copy-on-write
+            # so the weights are inherited instantly — no IPC serialisation cost.
+            with self._ctx.Pool(
+                processes=cfg.num_workers,
+                initializer=worker_init,
+                initargs=(adv_weights, strat_weights),
+            ) as pool:
+                for adv_s, strat_s in pool.imap_unordered(
+                    worker_task, tasks, chunksize=4
+                ):
+                    self.adv_buf.add_batch(adv_s)
+                    self.strat_buf.add_batch(strat_s)
 
     # ------------------------------------------------------------------
     # Network training (fixed gradient steps per iteration)
