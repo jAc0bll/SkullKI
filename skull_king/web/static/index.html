@@ -892,6 +892,80 @@ nav button.active { color: var(--gold-light); background: var(--gold-glow); }
 }
 .set-active-btn:hover { border-color: var(--gold); color: var(--gold-light); background: var(--gold-glow); }
 
+/* ── GTO Wizard Tab ──────────────────────────────────────────────── */
+#gto-tab { padding: 22px; max-width: 1100px; margin: 0 auto; }
+#gto-layout { display: grid; grid-template-columns: 380px 1fr; gap: 18px; align-items: start; }
+.gto-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 14px; }
+.gto-panel:last-child { margin-bottom: 0; }
+.gto-mode-row { display: flex; gap: 0; margin-top: 10px; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.gto-mode-btn { flex: 1; padding: 9px 0; background: var(--surface-2); color: var(--text-dim); font-family: var(--font-head); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; transition: background 0.18s, color 0.18s; }
+.gto-mode-btn.active { background: var(--gold-glow); color: var(--gold-light); }
+.gto-mode-btn:not(.active):hover { background: rgba(255,255,255,0.04); color: var(--text); }
+.gto-ctx-row { display: flex; gap: 0; margin-bottom: 10px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.gto-ctx-btn { flex: 1; padding: 7px 0; background: var(--surface-2); color: var(--text-dim); font-family: var(--font-head); font-size: 0.65rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; transition: background 0.15s, color 0.15s; }
+.gto-ctx-btn.active { background: rgba(61,127,189,0.18); color: #7db8f0; }
+.gto-ctx-btn.active-trick { background: rgba(61,127,189,0.18); color: #7db8f0; }
+.gto-ctx-btn.active-hand { background: var(--gold-glow); color: var(--gold-light); }
+.gto-fields-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.gto-fields-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; }
+.gto-field label { display: block; font-family: var(--font-head); font-size: 0.62rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 5px; }
+.gto-field input, .gto-field select { width: 100%; }
+.gto-suit-lbl { font-family: var(--font-head); font-size: 0.58rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; margin: 10px 0 4px; }
+.specials-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.special-stepper { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.special-chip { width: 44px; height: 54px; border-radius: 7px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; font-family: var(--font-head); font-weight: 700; border: 1px solid transparent; user-select: none; }
+.special-chip-emoji { font-size: 1.25rem; line-height: 1; }
+.special-chip-name { font-size: 0.48rem; letter-spacing: 0.05em; opacity: 0.75; }
+.special-cnt { font-family: var(--font-head); font-size: 0.72rem; font-weight: 700; color: var(--gold-light); min-width: 16px; text-align: center; height: 16px; }
+.special-btns { display: flex; gap: 3px; }
+.sp-btn { width: 18px; height: 18px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 3px; color: var(--text-hi); font-size: 0.78rem; font-weight: 700; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; transition: background 0.12s, border-color 0.12s; }
+.sp-btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--gold); }
+.sp-btn:disabled { opacity: 0.28; cursor: not-allowed; }
+.num-chips { display: flex; gap: 3px; flex-wrap: wrap; }
+.num-chip { width: 26px; height: 34px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-family: var(--font-head); font-size: 0.6rem; font-weight: 700; border: 1px solid transparent; transition: transform 0.1s, border-color 0.1s, box-shadow 0.1s; user-select: none; }
+.num-chip:hover { transform: translateY(-2px); }
+.num-chip.sel-hand { border-color: var(--gold-light) !important; box-shadow: 0 0 7px rgba(232,184,75,0.45); }
+.num-chip.sel-trick { border-color: #7db8f0 !important; box-shadow: 0 0 7px rgba(61,127,189,0.45); }
+.num-chip.unavail { opacity: 0.22; cursor: not-allowed; }
+.chip-BLK { background: linear-gradient(145deg,#141e2e,#0d1421); color: #c8d8f8; border-color: #1d2e4a; }
+.chip-YEL { background: linear-gradient(145deg,#2d1a05,#3d2408); color: #ffd060; border-color: #4a2c0a; }
+.chip-GRN { background: linear-gradient(145deg,#091e0f,#0c2515); color: #50d080; border-color: #153525; }
+.chip-PRP { background: linear-gradient(145deg,#150928,#1c0e36); color: #c090f8; border-color: #281545; }
+.chip-SK  { background: linear-gradient(145deg,#180a10,#0f060e); color: var(--gold-light); border-color: #4a1800; }
+.chip-PIR { background: linear-gradient(145deg,#2a0808,#1c0506); color: #f08080; border-color: #4a1010; }
+.chip-MER { background: linear-gradient(145deg,#041828,#06203a); color: #60d8f8; border-color: #0a2848; }
+.chip-ESC { background: linear-gradient(145deg,#141c1e,#0e1416); color: #809098; border-color: #1e2c30; }
+.chip-TIG { background: linear-gradient(145deg,#281405,#1e0e04); color: #f8b840; border-color: #482405; }
+#gto-hand-tags, #gto-trick-tags { display: flex; flex-wrap: wrap; gap: 5px; min-height: 26px; margin-top: 8px; }
+.hand-tag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px 3px 10px; border-radius: 20px; background: var(--surface-2); border: 1px solid var(--border); font-family: var(--font-head); font-size: 0.65rem; color: var(--text-hi); }
+.trick-tag { background: rgba(61,127,189,0.1); border-color: rgba(61,127,189,0.3); color: #7db8f0; }
+.hand-tag-rm { background: none; border: none; color: var(--text-dim); font-size: 0.8rem; cursor: pointer; padding: 0 2px; line-height: 1; }
+.hand-tag-rm:hover { color: #f08080; }
+#gto-analyze-btn { width: 100%; padding: 12px; background: var(--gold); color: #080c12; font-family: var(--font-head); font-weight: 700; font-size: 0.82rem; letter-spacing: 0.15em; text-transform: uppercase; border-radius: 8px; transition: background 0.18s, box-shadow 0.18s; }
+#gto-analyze-btn:hover:not(:disabled) { background: var(--gold-light); box-shadow: 0 0 18px var(--gold-glow); }
+#gto-analyze-btn:disabled { opacity: 0.45; }
+#gto-results-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 22px; }
+#gto-placeholder { text-align: center; padding: 50px 0; color: var(--text-dim); font-style: italic; font-size: 0.88rem; line-height: 1.8; }
+#gto-result-content { display: none; }
+.gto-recommended { text-align: center; padding: 18px 14px 20px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
+.gto-rec-lbl { font-family: var(--font-head); font-size: 0.62rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 8px; }
+.gto-rec-val { font-family: var(--font-head); font-size: 2rem; font-weight: 700; color: var(--gold-light); text-shadow: 0 0 20px rgba(232,184,75,0.2); }
+.gto-rec-sub { color: var(--text-dim); font-size: 0.82rem; margin-top: 6px; }
+.gto-dist-lbl { font-family: var(--font-head); font-size: 0.65rem; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 12px; }
+.gto-bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.gto-bar-lbl { width: 145px; flex-shrink: 0; font-family: var(--font-head); font-size: 0.7rem; color: var(--text-hi); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gto-bar-bg { flex: 1; height: 26px; background: var(--surface-2); border-radius: 6px; overflow: hidden; position: relative; border: 1px solid var(--border); }
+.gto-bar-fill { height: 100%; border-radius: 6px; display: flex; align-items: center; padding-left: 8px; font-family: var(--font-head); font-size: 0.68rem; font-weight: 700; color: rgba(0,0,0,0.8); transition: width 0.5s cubic-bezier(0.4,0,0.2,1); min-width: 3px; }
+.gto-bar-row.is-rec .gto-bar-fill { background: linear-gradient(90deg,var(--gold),var(--gold-light)); }
+.gto-bar-row:not(.is-rec) .gto-bar-fill { background: linear-gradient(90deg,#1e3a60,#2a5080); }
+.gto-bar-pct { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 0.68rem; font-family: var(--font-head); color: var(--text-dim); }
+.gto-pos-badge { display: inline-block; margin-bottom: 14px; background: rgba(61,127,189,0.12); color: #7db8f0; border: 1px solid rgba(61,127,189,0.3); border-radius: 20px; padding: 3px 14px; font-family: var(--font-head); font-size: 0.65rem; letter-spacing: 0.08em; }
+.gto-strength-row { display: flex; align-items: center; gap: 10px; padding: 12px 0 0; border-top: 1px solid var(--border); margin-top: 14px; }
+.gto-str-lbl { font-family: var(--font-head); font-size: 0.62rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; flex-shrink: 0; }
+.gto-str-bg { flex: 1; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.gto-str-bar { height: 100%; border-radius: 3px; background: linear-gradient(90deg,#2d8a5a,#50d080); transition: width 0.5s ease; }
+.gto-str-val { font-family: var(--font-head); font-size: 0.72rem; color: var(--text-hi); flex-shrink: 0; width: 32px; }
+
 /* ── Toasts ──────────────────────────────────────────────────────── */
 .toast {
   display: none;
@@ -924,6 +998,7 @@ nav button.active { color: var(--gold-light); background: var(--gold-glow); }
     <button onclick="switchTab('tournament')" data-tab="tournament">🏆 Tournament</button>
     <button onclick="switchTab('strategies')" data-tab="strategies">📊 Strategies</button>
     <button onclick="switchTab('settings')" data-tab="settings">⚙ Settings</button>
+    <button onclick="switchTab('gto')" data-tab="gto">🔮 GTO Wizard</button>
   </nav>
 </header>
 
@@ -1135,6 +1210,126 @@ nav button.active { color: var(--gold-light); background: var(--gold-glow); }
 
 </div>
 
+<!-- ═══════════════════════════════════════ GTO WIZARD TAB -->
+<div id="gto-tab" class="tab-panel">
+<div id="gto-layout">
+
+  <!-- ── LEFT: Controls ────────────────────────────────────────── -->
+  <div id="gto-left">
+
+    <!-- Mode -->
+    <div class="gto-panel">
+      <div class="panel-title">Analysis Mode</div>
+      <div class="gto-mode-row">
+        <button class="gto-mode-btn active" id="gto-bid-mode-btn" onclick="setGTOMode('bid')">📊 Bid Analysis</button>
+        <button class="gto-mode-btn" id="gto-play-mode-btn" onclick="setGTOMode('play')">🃏 Play Analysis</button>
+      </div>
+    </div>
+
+    <!-- Situation -->
+    <div class="gto-panel">
+      <div class="panel-title">Situation</div>
+      <div class="gto-fields-2">
+        <div class="gto-field">
+          <label>Round (1–10)</label>
+          <input type="number" id="gto-round" value="5" min="1" max="10" oninput="onGTORoundChange()">
+        </div>
+        <div class="gto-field" id="gto-trick-field" style="display:none">
+          <label>Trick #</label>
+          <input type="number" id="gto-trick-num" value="1" min="1" max="10">
+        </div>
+      </div>
+      <div id="gto-play-fields" style="display:none; margin-top:12px">
+        <div class="gto-fields-4">
+          <div class="gto-field">
+            <label>My Bid</label>
+            <input type="number" id="gto-mybid" value="2" min="0" max="10">
+          </div>
+          <div class="gto-field">
+            <label>Won So Far</label>
+            <input type="number" id="gto-won" value="0" min="0" max="10">
+          </div>
+          <div class="gto-field" style="grid-column:span 2">
+            <label>My Score (approx)</label>
+            <input type="number" id="gto-myscore" value="0" min="-200" max="500">
+          </div>
+        </div>
+        <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border)">
+          <div class="panel-title" style="margin-bottom:8px">Cards Already Played in Trick</div>
+          <div id="gto-trick-tags"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Picker context (hand vs trick) -->
+    <div class="gto-panel">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+        <div class="panel-title" style="margin-bottom:0">Card Picker — <span id="gto-hand-count">0</span> in hand</div>
+        <div class="gto-ctx-row" id="gto-ctx-row" style="display:none; width:180px; flex-shrink:0">
+          <button class="gto-ctx-btn active-hand active" id="ctx-hand-btn" onclick="setGTOCtx('hand')">Your Hand</button>
+          <button class="gto-ctx-btn active-trick" id="ctx-trick-btn" onclick="setGTOCtx('trick')">Trick</button>
+        </div>
+      </div>
+
+      <!-- Specials -->
+      <div class="gto-suit-lbl">Special Cards</div>
+      <div class="specials-row" id="gto-specials-row">
+        <!-- filled by JS -->
+      </div>
+
+      <!-- Numbered cards -->
+      <div class="gto-suit-lbl" style="margin-top:14px">♠ Black (Trump)</div>
+      <div class="num-chips" id="chips-BLACK"></div>
+      <div class="gto-suit-lbl">★ Yellow</div>
+      <div class="num-chips" id="chips-YELLOW"></div>
+      <div class="gto-suit-lbl">♣ Green</div>
+      <div class="num-chips" id="chips-GREEN"></div>
+      <div class="gto-suit-lbl">♦ Purple</div>
+      <div class="num-chips" id="chips-PURPLE"></div>
+
+      <!-- Hand tag display -->
+      <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border)">
+        <div class="gto-suit-lbl" style="margin-top:0">Hand</div>
+        <div id="gto-hand-tags"></div>
+      </div>
+    </div>
+
+    <!-- Analyze -->
+    <div class="gto-panel">
+      <button id="gto-analyze-btn" onclick="runGTOAnalysis()">▶ Analyze</button>
+    </div>
+
+  </div>
+
+  <!-- ── RIGHT: Results ─────────────────────────────────────────── -->
+  <div id="gto-right">
+
+    <!-- Model selector -->
+    <div class="gto-panel" id="gto-model-panel">
+      <div class="panel-title">CFR Model</div>
+      <div id="gto-model-row" style="display:flex;align-items:center;gap:10px;margin-top:8px">
+        <select id="gto-model-select" style="flex:1;font-size:0.78rem">
+          <option value="">Loading models…</option>
+        </select>
+        <button class="sp-btn" style="width:auto;padding:4px 12px;font-size:0.65rem;letter-spacing:0.05em;font-family:var(--font-head)" onclick="switchGTOModel()">Load</button>
+      </div>
+      <div id="gto-active-model" style="margin-top:6px;font-size:0.72rem;color:var(--text-dim);font-family:var(--font-head)"></div>
+    </div>
+
+    <div id="gto-results-panel">
+      <div class="panel-title">GTO Recommendation</div>
+      <div id="gto-placeholder">
+        Pick your hand using the card grid, set the situation,<br>then click <strong style="color:var(--gold-light)">Analyze</strong>.
+        <br><br>
+        <span style="font-size:0.8rem;opacity:0.55">Requires a trained CFR model (any *_strat.pt in models/skull_king/)</span>
+      </div>
+      <div id="gto-result-content"></div>
+    </div>
+  </div>
+
+</div>
+</div>
+
 <!-- Tigress modal -->
 <div id="tigress-modal">
   <div id="tigress-inner">
@@ -1169,6 +1364,7 @@ function switchTab(name) {
   document.getElementById(name + '-tab').classList.add('active');
   event.target.classList.add('active');
   if (name === 'settings') loadSettings();
+  if (name === 'gto') loadGTOModels();
 }
 
 // ═══════════════════════════════════════════════════ SETUP
@@ -1709,9 +1905,399 @@ function showSuccess(msg) {
   setTimeout(() => { t.style.display = 'none'; }, 3000);
 }
 
+// ═══════════════════════════════════════════════════ GTO WIZARD
+
+const GTO_SPECIALS = [
+  { key: 'SKULL_KING', emoji: '💀', name: 'SK',  max: 1, cls: 'chip-SK'  },
+  { key: 'PIRATE',     emoji: '🏴‍☠️', name: 'PIR', max: 5, cls: 'chip-PIR' },
+  { key: 'MERMAID',    emoji: '🧜',  name: 'MER', max: 2, cls: 'chip-MER' },
+  { key: 'ESCAPE',     emoji: '🏳️', name: 'ESC', max: 5, cls: 'chip-ESC' },
+  { key: 'TIGRESS',    emoji: '🐯',  name: 'TIG', max: 1, cls: 'chip-TIG' },
+];
+const GTO_SUITS = [
+  { key: 'BLACK',  cls: 'chip-BLK' },
+  { key: 'YELLOW', cls: 'chip-YEL' },
+  { key: 'GREEN',  cls: 'chip-GRN' },
+  { key: 'PURPLE', cls: 'chip-PRP' },
+];
+
+let gtoMode = 'bid';
+let gtoCtx = 'hand';   // 'hand' | 'trick'
+let gtoHand = [];      // array of card strings, may repeat for specials
+let gtoTrick = [];     // array of card strings in current trick
+
+// -- Friendly display names for card strings
+function gtoCardDisplay(s) {
+  if (!s.includes('_') || ['SKULL_KING'].includes(s)) {
+    const map = { SKULL_KING:'💀 Skull King', PIRATE:'🏴‍☠️ Pirate', MERMAID:'🧜 Mermaid', ESCAPE:'🏳️ Escape', TIGRESS:'🐯 Tigress' };
+    return map[s] || s;
+  }
+  const parts = s.split('_');
+  const val = parts[parts.length - 1];
+  if (/^\d+$/.test(val)) {
+    const suit = parts.slice(0, -1).join('_');
+    const sym = { BLACK:'♠', YELLOW:'★', GREEN:'♣', PURPLE:'♦' }[suit] || suit;
+    return `${sym} ${val}`;
+  }
+  return s.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+}
+
+function gtoCountIn(arr, key) { return arr.filter(x => x === key).length; }
+
+function setGTOMode(mode) {
+  gtoMode = mode;
+  document.getElementById('gto-bid-mode-btn').classList.toggle('active', mode === 'bid');
+  document.getElementById('gto-play-mode-btn').classList.toggle('active', mode === 'play');
+  const playFields = document.getElementById('gto-play-fields');
+  const trickField = document.getElementById('gto-trick-field');
+  const ctxRow = document.getElementById('gto-ctx-row');
+  playFields.style.display = mode === 'play' ? '' : 'none';
+  trickField.style.display = mode === 'play' ? '' : 'none';
+  ctxRow.style.display = mode === 'play' ? '' : 'none';
+  if (mode === 'bid') {
+    gtoTrick = [];
+    setGTOCtx('hand');
+  }
+  renderGTOPicker();
+  renderGTOTags();
+}
+
+function setGTOCtx(ctx) {
+  gtoCtx = ctx;
+  document.getElementById('ctx-hand-btn').classList.toggle('active', ctx === 'hand');
+  document.getElementById('ctx-trick-btn').classList.toggle('active', ctx === 'trick');
+  renderGTOPicker();
+}
+
+function onGTORoundChange() {
+  const r = parseInt(document.getElementById('gto-round').value) || 1;
+  const t = document.getElementById('gto-trick-num');
+  if (t) t.max = r;
+}
+
+function buildGTOPicker() {
+  // Specials
+  const specRow = document.getElementById('gto-specials-row');
+  specRow.innerHTML = GTO_SPECIALS.map(sp => `
+    <div class="special-stepper">
+      <div class="special-chip ${sp.cls}" title="${sp.key}">
+        <div class="special-chip-emoji">${sp.emoji}</div>
+        <div class="special-chip-name">${sp.name}</div>
+      </div>
+      <div class="special-cnt" id="scnt-${sp.key}">0</div>
+      <div class="special-btns">
+        <button class="sp-btn" id="sbtn-minus-${sp.key}" onclick="changeSpecial('${sp.key}',-1)" title="Remove">−</button>
+        <button class="sp-btn" id="sbtn-plus-${sp.key}"  onclick="changeSpecial('${sp.key}',+1)" title="Add">+</button>
+      </div>
+    </div>`).join('');
+
+  // Numbered suits
+  GTO_SUITS.forEach(suit => {
+    const el = document.getElementById('chips-' + suit.key);
+    el.innerHTML = Array.from({length:14}, (_,i) => i+1).map(v =>
+      `<div class="num-chip ${suit.cls}" id="chip-${suit.key}_${v}"
+            data-card="${suit.key}_${v}" onclick="toggleNumChip('${suit.key}_${v}')">${v}</div>`
+    ).join('');
+  });
+}
+
+function renderGTOPicker() {
+  // Specials counts
+  GTO_SPECIALS.forEach(sp => {
+    const inHand  = gtoCountIn(gtoHand, sp.key);
+    const inTrick = gtoCountIn(gtoTrick, sp.key);
+    const total   = inHand + inTrick;
+    const inCtx   = gtoCtx === 'hand' ? inHand : inTrick;
+    document.getElementById('scnt-' + sp.key).textContent = total > 0 ? total : '';
+    document.getElementById('sbtn-minus-' + sp.key).disabled = inCtx === 0;
+    document.getElementById('sbtn-plus-'  + sp.key).disabled = total >= sp.max;
+  });
+
+  // Numbered chips
+  GTO_SUITS.forEach(suit => {
+    for (let v = 1; v <= 14; v++) {
+      const key  = `${suit.key}_${v}`;
+      const chip = document.getElementById('chip-' + key);
+      if (!chip) continue;
+      const inHand  = gtoHand.includes(key);
+      const inTrick = gtoTrick.includes(key);
+      chip.classList.toggle('sel-hand',  inHand);
+      chip.classList.toggle('sel-trick', inTrick);
+      // Unavailable: in the other context
+      const inOther = gtoCtx === 'hand' ? inTrick : inHand;
+      chip.classList.toggle('unavail', inOther);
+    }
+  });
+
+  document.getElementById('gto-hand-count').textContent = gtoHand.length;
+}
+
+function changeSpecial(key, delta) {
+  const sp = GTO_SPECIALS.find(s => s.key === key);
+  const total = gtoCountIn(gtoHand, key) + gtoCountIn(gtoTrick, key);
+  if (delta > 0 && total < sp.max) {
+    if (gtoCtx === 'hand') gtoHand.push(key);
+    else gtoTrick.push(key);
+  } else if (delta < 0) {
+    const arr = gtoCtx === 'hand' ? gtoHand : gtoTrick;
+    const idx = arr.lastIndexOf(key);
+    if (idx >= 0) arr.splice(idx, 1);
+  }
+  renderGTOPicker();
+  renderGTOTags();
+}
+
+function toggleNumChip(key) {
+  const inHand  = gtoHand.includes(key);
+  const inTrick = gtoTrick.includes(key);
+  if (gtoCtx === 'hand') {
+    if (inTrick) return;   // belongs to trick
+    if (inHand) { gtoHand = gtoHand.filter(x => x !== key); }
+    else gtoHand.push(key);
+  } else {
+    if (inHand) return;    // belongs to hand
+    if (inTrick) { gtoTrick = gtoTrick.filter(x => x !== key); }
+    else gtoTrick.push(key);
+  }
+  renderGTOPicker();
+  renderGTOTags();
+}
+
+function removeFromHand(key) {
+  // Remove first occurrence from hand
+  const specials = GTO_SPECIALS.map(s => s.key);
+  if (specials.includes(key)) {
+    const idx = gtoHand.lastIndexOf(key);
+    if (idx >= 0) gtoHand.splice(idx, 1);
+  } else {
+    gtoHand = gtoHand.filter(x => x !== key);
+  }
+  renderGTOPicker(); renderGTOTags();
+}
+
+function removeFromTrick(key) {
+  const specials = GTO_SPECIALS.map(s => s.key);
+  if (specials.includes(key)) {
+    const idx = gtoTrick.lastIndexOf(key);
+    if (idx >= 0) gtoTrick.splice(idx, 1);
+  } else {
+    gtoTrick = gtoTrick.filter(x => x !== key);
+  }
+  renderGTOPicker(); renderGTOTags();
+}
+
+function renderGTOTags() {
+  // Hand tags
+  const handEl = document.getElementById('gto-hand-tags');
+  if (gtoHand.length === 0) {
+    handEl.innerHTML = '<span style="color:var(--text-dim);font-size:0.8rem;font-style:italic">No cards selected</span>';
+  } else {
+    // Group specials for display
+    const shown = [];
+    const specKeys = GTO_SPECIALS.map(s => s.key);
+    const usedSpecial = {};
+    for (const k of gtoHand) {
+      if (specKeys.includes(k)) {
+        usedSpecial[k] = (usedSpecial[k] || 0) + 1;
+      } else {
+        shown.push({ key: k, label: gtoCardDisplay(k), ctx: 'hand' });
+      }
+    }
+    for (const [k, cnt] of Object.entries(usedSpecial)) {
+      for (let i = 0; i < cnt; i++)
+        shown.push({ key: k, label: gtoCardDisplay(k), ctx: 'hand' });
+    }
+    handEl.innerHTML = shown.map(item =>
+      `<div class="hand-tag">
+        ${item.label}
+        <button class="hand-tag-rm" onclick="removeFromHand('${item.key}')" title="Remove">×</button>
+      </div>`
+    ).join('');
+  }
+
+  // Trick tags (play mode)
+  const trickEl = document.getElementById('gto-trick-tags');
+  if (!trickEl) return;
+  if (gtoTrick.length === 0) {
+    trickEl.innerHTML = '<span style="color:var(--text-dim);font-size:0.8rem;font-style:italic">No trick cards</span>';
+  } else {
+    trickEl.innerHTML = gtoTrick.map(k =>
+      `<div class="hand-tag trick-tag">
+        ${gtoCardDisplay(k)}
+        <button class="hand-tag-rm" onclick="removeFromTrick('${k}')" title="Remove">×</button>
+      </div>`
+    ).join('');
+  }
+}
+
+async function runGTOAnalysis() {
+  if (gtoHand.length === 0) { showError('Add at least one card to your hand first.'); return; }
+  const round = parseInt(document.getElementById('gto-round').value) || 1;
+  const btn = document.getElementById('gto-analyze-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Querying…';
+
+  document.getElementById('gto-placeholder').style.display = 'none';
+  document.getElementById('gto-result-content').style.display = 'none';
+
+  try {
+    let result;
+    if (gtoMode === 'bid') {
+      result = await post('/gto/bid', {
+        hand: gtoHand,
+        round_num: round,
+        player_score: 0.0,
+        opponent_scores: [],
+      });
+      renderGTOBidResult(result);
+    } else {
+      const trickNum   = parseInt(document.getElementById('gto-trick-num').value) || 1;
+      const myBid      = parseInt(document.getElementById('gto-mybid').value) || 0;
+      const won        = parseInt(document.getElementById('gto-won').value) || 0;
+      const myScore    = parseFloat(document.getElementById('gto-myscore').value) || 0;
+      result = await post('/gto/play', {
+        hand: gtoHand,
+        round_num: round,
+        trick_num: trickNum,
+        my_bid: myBid,
+        tricks_won: won,
+        current_trick: gtoTrick,
+        seen_cards: [],
+        player_score: myScore,
+        opponent_scores: [],
+        is_trick_leader: gtoTrick.length === 0,
+      });
+      renderGTOPlayResult(result);
+    }
+    document.getElementById('gto-result-content').style.display = 'block';
+  } catch(e) {
+    document.getElementById('gto-placeholder').style.display = 'block';
+    showError('GTO query failed: ' + e.message);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '▶ Analyze';
+}
+
+function renderGTOBidResult(r) {
+  const el = document.getElementById('gto-result-content');
+  const probs = r.probabilities;
+  const sorted = Object.entries(probs).sort((a,b) => b[1] - a[1]);
+  const maxP = sorted.length ? sorted[0][1] : 1;
+
+  const bars = sorted.map(([bid, p]) => {
+    const isRec = parseInt(bid) === r.recommended_bid;
+    const pct = (p * 100).toFixed(1);
+    const barW = maxP > 0 ? Math.round((p / maxP) * 100) : 0;
+    return `<div class="gto-bar-row ${isRec ? 'is-rec' : ''}">
+      <div class="gto-bar-lbl">Bid ${bid}</div>
+      <div class="gto-bar-bg">
+        <div class="gto-bar-fill" style="width:${barW}%">${pct > 5 ? pct + '%' : ''}</div>
+        <span class="gto-bar-pct">${pct}%</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  const strPct = Math.min(100, Math.round(r.hand_strength * 20));
+
+  el.innerHTML = `
+    <div class="gto-recommended">
+      <div class="gto-rec-lbl">GTO Recommended Bid — Round ${r.round_num}</div>
+      <div class="gto-rec-val">${r.recommended_bid}</div>
+      <div class="gto-rec-sub">${(probs[r.recommended_bid]*100).toFixed(1)}% probability</div>
+    </div>
+    <div class="gto-dist-lbl">Bid Frequency Distribution</div>
+    ${bars}
+    <div class="gto-strength-row">
+      <div class="gto-str-lbl">Hand Strength</div>
+      <div class="gto-str-bg"><div class="gto-str-bar" style="width:${strPct}%"></div></div>
+      <div class="gto-str-val">${r.hand_strength.toFixed(2)}</div>
+    </div>`;
+}
+
+function renderGTOPlayResult(r) {
+  const el = document.getElementById('gto-result-content');
+  const probs = r.probabilities;
+  const sorted = Object.entries(probs).sort((a,b) => b[1] - a[1]);
+  const maxP = sorted.length ? sorted[0][1] : 1;
+  const posLabels = ['Leading the trick', '2nd to play', '3rd to play', '4th to play', '5th to play', '6th to play'];
+  const posLabel = posLabels[r.position_in_trick] || `Position ${r.position_in_trick + 1}`;
+
+  const bars = sorted.map(([card, p]) => {
+    const isRec = card === r.recommended;
+    const pct = (p * 100).toFixed(1);
+    const barW = maxP > 0 ? Math.round((p / maxP) * 100) : 0;
+    return `<div class="gto-bar-row ${isRec ? 'is-rec' : ''}">
+      <div class="gto-bar-lbl">${card}</div>
+      <div class="gto-bar-bg">
+        <div class="gto-bar-fill" style="width:${barW}%">${pct > 6 ? pct + '%' : ''}</div>
+        <span class="gto-bar-pct">${pct}%</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  const topProb = probs[r.recommended] ? (probs[r.recommended]*100).toFixed(1) : '?';
+
+  el.innerHTML = `
+    <div class="gto-recommended">
+      <div class="gto-rec-lbl">GTO Recommended Play</div>
+      <div class="gto-rec-val">${r.recommended}</div>
+      <div class="gto-rec-sub">${topProb}% probability · <span class="gto-pos-badge" style="display:inline-block;margin:0">${posLabel}</span></div>
+    </div>
+    <div class="gto-dist-lbl">Play Frequency Distribution</div>
+    ${sorted.length ? bars : '<div style="color:var(--text-dim);font-style:italic;font-size:0.85rem">No legal actions found — check hand and follow-suit rules.</div>'}`;
+}
+
+function initGTOPicker() {
+  buildGTOPicker();
+  renderGTOPicker();
+  renderGTOTags();
+}
+
+async function loadGTOModels() {
+  try {
+    const r = await get('/gto/models');
+    const sel = document.getElementById('gto-model-select');
+    const activeEl = document.getElementById('gto-active-model');
+    sel.innerHTML = '';
+    if (!r.models || r.models.length === 0) {
+      sel.innerHTML = '<option value="">No models found</option>';
+      return;
+    }
+    r.models.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.path;
+      opt.textContent = `${m.name} (${m.size_mb} MB)`;
+      if (m.active) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    if (!r.models.some(m => m.active) && r.models.length > 0) {
+      sel.value = r.models[r.models.length - 1].path;
+    }
+    const active = r.active ? r.active.split(/[/\\]/).pop() : '—';
+    activeEl.textContent = `Active: ${active}`;
+  } catch(e) {
+    document.getElementById('gto-model-select').innerHTML = '<option value="">Error loading models</option>';
+  }
+}
+
+async function switchGTOModel() {
+  const path = document.getElementById('gto-model-select').value;
+  if (!path) return;
+  try {
+    await post('/gto/load', { path });
+    const name = path.split(/[/\\]/).pop();
+    document.getElementById('gto-active-model').textContent = `Active: ${name}`;
+    document.getElementById('gto-placeholder').style.display = 'block';
+    document.getElementById('gto-result-content').style.display = 'none';
+    showSuccess(`Loaded ${name}`);
+  } catch(e) { showError(e.message); }
+}
+
 // ═══════════════════════════════════════════════════ INIT
 updateOpponentSlots();
 updateAgentGrid();
+initGTOPicker();
 </script>
 </body>
 </html>

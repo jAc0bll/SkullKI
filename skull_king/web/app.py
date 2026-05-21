@@ -788,6 +788,159 @@ def reload_model():
 
 
 # ---------------------------------------------------------------------------
+# CFR Strategy Analysis (GTO) — lazy loader
+# ---------------------------------------------------------------------------
+
+_cfr_explorer: Any = None
+_cfr_model_path: str = ""
+
+
+def _find_default_cfr_model() -> str:
+    """Return best available CFR strategy model path, or empty string."""
+    candidates = [
+        os.path.join(_MODELS_DIR, "cfr_final_strat.pt"),
+    ]
+    # Also look for any checkpoint *_strat.pt, prefer later iterations
+    if os.path.isdir(_MODELS_DIR):
+        extras = sorted(
+            glob.glob(os.path.join(_MODELS_DIR, "*_strat.pt")),
+            key=lambda p: os.path.getmtime(p),
+            reverse=True,
+        )
+        candidates += extras
+    for p in candidates:
+        if os.path.exists(p):
+            return os.path.normpath(p)
+    return ""
+
+
+def _load_cfr_explorer():
+    global _cfr_explorer, _cfr_model_path
+    if _cfr_explorer is None:
+        if not _cfr_model_path:
+            _cfr_model_path = _find_default_cfr_model()
+        if not _cfr_model_path:
+            raise HTTPException(
+                404,
+                "No CFR strategy model found in models/skull_king/. "
+                "Train with: python -m skull_king.training.cfr.train",
+            )
+        from skull_king.analysis.explorer import StrategyExplorer
+        _cfr_explorer = StrategyExplorer(_cfr_model_path)
+    return _cfr_explorer
+
+
+class BidQueryRequest(BaseModel):
+    hand: list[str]          # e.g. ["BLACK_14", "PIRATE", "ESCAPE", ...]
+    round_num: int
+    player_score: float = 0.0
+    opponent_scores: list[float] = []
+
+
+class PlayQueryRequest(BaseModel):
+    hand: list[str]
+    round_num: int
+    trick_num: int
+    my_bid: int
+    tricks_won: int
+    current_trick: list[str] = []
+    seen_cards: list[str] = []
+    player_score: float = 0.0
+    opponent_scores: list[float] = []
+    is_trick_leader: bool = False
+
+
+def _parse_card(s: str) -> Card:
+    """Parse card string like 'BLACK_14', 'PIRATE', 'SKULL_KING', 'MERMAID', 'ESCAPE', 'TIGRESS'.
+
+    Numbered cards are identified by having a numeric suffix (e.g. 'BLACK_14').
+    Special cards may contain underscores too (e.g. 'SKULL_KING'), so we check
+    whether the last component is numeric before treating it as a numbered card.
+    """
+    s = s.upper().strip()
+    if "_" in s:
+        parts = s.rsplit("_", 1)
+        if parts[1].isdigit():
+            suit = Suit[parts[0]]
+            value = int(parts[1])
+            return Card(card_type=CardType.NUMBERED, suit=suit, value=value)
+    return Card(card_type=CardType[s])
+
+
+@app.post("/gto/bid")
+async def gto_bid(req: BidQueryRequest):
+    explorer = _load_cfr_explorer()
+    try:
+        hand = [_parse_card(c) for c in req.hand]
+    except Exception as e:
+        raise HTTPException(400, f"Invalid card: {e}")
+    result = explorer.query_bid(
+        hand, req.round_num, req.player_score, req.opponent_scores or None
+    )
+    return {
+        "recommended_bid": result.recommended_bid,
+        "hand_strength": result.hand_strength,
+        "probabilities": result.probabilities,
+        "round_num": result.round_num,
+    }
+
+
+@app.post("/gto/play")
+async def gto_play(req: PlayQueryRequest):
+    explorer = _load_cfr_explorer()
+    try:
+        hand = [_parse_card(c) for c in req.hand]
+        current_trick = [_parse_card(c) for c in req.current_trick]
+        seen_cards = [_parse_card(c) for c in req.seen_cards]
+    except Exception as e:
+        raise HTTPException(400, f"Invalid card: {e}")
+    result = explorer.query_play(
+        hand, req.round_num, req.trick_num, req.my_bid, req.tricks_won,
+        current_trick, seen_cards, req.player_score,
+        req.opponent_scores, req.is_trick_leader,
+    )
+    return {
+        "recommended": result.recommended,
+        "position_in_trick": result.position_in_trick,
+        "probabilities": result.probabilities,
+    }
+
+
+@app.get("/gto/models")
+async def gto_available_models():
+    """List available CFR strategy models."""
+    models = []
+    if os.path.isdir(_MODELS_DIR):
+        for f in sorted(os.listdir(_MODELS_DIR)):
+            if f.endswith("_strat.pt"):
+                full = os.path.join(_MODELS_DIR, f)
+                stat = os.stat(full)
+                models.append({
+                    "name": f,
+                    "path": os.path.normpath(full),
+                    "size_mb": round(stat.st_size / 1_048_576, 1),
+                    "active": os.path.normpath(full) == os.path.normpath(_cfr_model_path) if _cfr_model_path else False,
+                })
+    return {"models": models, "active": _cfr_model_path}
+
+
+class GTOLoadRequest(BaseModel):
+    path: str
+
+
+@app.post("/gto/load")
+async def gto_load_model(req: GTOLoadRequest):
+    """Switch the active CFR strategy model."""
+    global _cfr_explorer, _cfr_model_path
+    path = os.path.normpath(req.path)
+    if not os.path.exists(path):
+        raise HTTPException(404, f"Model not found: {path}")
+    _cfr_explorer = None
+    _cfr_model_path = path
+    return {"ok": True, "active": path}
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
