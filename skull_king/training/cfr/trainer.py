@@ -275,7 +275,11 @@ class DeepCFRTrainer:
             worker_init(adv_weights, cfg.n_players, heuristic_frac=cfg.heuristic_frac)
             results = (worker_task(t) for t in tasks)
         else:
-            results = persistent_pool.imap_unordered(worker_task, tasks, chunksize=4)
+            # chunksize=64: 2000 tasks / 64 = 31 scheduling round-trips instead of 500.
+            # Each round-trip carries 64x55KB of result pickles — same total IPC volume
+            # but 16x fewer main-process iterations and 16x fewer pipe-send syscalls.
+            chunksize = max(4, len(tasks) // (cfg.num_workers * 2))
+            results = persistent_pool.imap_unordered(worker_task, tasks, chunksize=chunksize)
 
         all_adv_obs, all_adv_masks, all_adv_targets, all_adv_actions = [], [], [], []
         all_strat_obs, all_strat_masks, all_strat_strategies = [], [], []
