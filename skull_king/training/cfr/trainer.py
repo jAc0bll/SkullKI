@@ -128,11 +128,20 @@ class DeepCFRTrainer:
         self._is_windows = sys.platform == "win32"
         self._ctx = multiprocessing.get_context("spawn" if self._is_windows else "fork")
 
-        # Limit torch threads in the MAIN process: 28 threads on a 56-core box
-        # causes massive scheduler overhead for small matmuls ([512,512], batch
-        # 1024).  8 threads cuts adv+strat training from ~14 s to ~3 s/iter.
+        # Set torch threads for main-process net training.
+        # Workers (separate processes) always use 1 thread via worker_init.
+        # During training the worker processes are idle, so the main process
+        # can safely use many cores.  On GPU boxes the GPU does the heavy
+        # lifting and 8 threads is enough; on CPU-only servers more threads
+        # cut training time significantly (sweet spot ~16-24 for 512×512 nets,
+        # batch 1024 — beyond ~24 threads, BLAS synchronisation overhead grows).
         if cfg.num_workers > 1:
-            torch.set_num_threads(min(8, torch.get_num_threads()))
+            if self.device.type == "cpu":
+                # CPU-only: use up to half the available cores for training
+                n_train_threads = min(max(8, torch.get_num_threads() // 2), 24)
+            else:
+                n_train_threads = min(8, torch.get_num_threads())
+            torch.set_num_threads(n_train_threads)
 
         persistent_pool = None
         self._manager = None
