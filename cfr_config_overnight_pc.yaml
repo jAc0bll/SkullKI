@@ -45,4 +45,4 @@ strat_buffer_capacity: 3_000_000
 eval_every_n_iters: 100        # 25 evals total — tracks WR vs random/heuristic
 checkpoint_every_n_iters: 250  # 10 checkpoints to compare/roll back to
 model_dir: models/skull_king
-run_name: cfr_v5_overnight
+run_name: cfr_v6_heuristic
