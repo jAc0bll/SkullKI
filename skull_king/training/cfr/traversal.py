@@ -113,6 +113,10 @@ _SHARED_W = None         # type: ignore[assignment]
 _SHARED_V = None         # type: ignore[assignment]
 _LOCAL_V: int = -1
 
+# C engine backend (None when extension not built or disabled).
+# When set, worker_task delegates traversal to C instead of Python.
+_C_ENGINE = None         # type: ignore[assignment]
+
 # Heuristic opponent mixing — set during worker_init.
 _HEURISTIC_FRAC: float = 0.0       # fraction of opponent decisions using HeuristicAgent
 _HEURISTIC = None                   # type: ignore[assignment]
@@ -168,7 +172,7 @@ def worker_init(
     # Force single-threaded torch to avoid deadlock on any linear layer call.
     torch.set_num_threads(1)
     global _ADV_NET, _UTIL_ENV, _SHARED_W, _SHARED_V, _LOCAL_V
-    global _HEURISTIC, _HEURISTIC_FRAC
+    global _HEURISTIC, _HEURISTIC_FRAC, _C_ENGINE
     _HEURISTIC_FRAC = heuristic_frac
     if heuristic_frac > 0.0:
         from skull_king.agents import HeuristicAgent as _HA
@@ -183,6 +187,15 @@ def worker_init(
     _SHARED_W = shared_w
     _SHARED_V = shared_v
     _LOCAL_V = 0  # iter-0 weights already loaded
+
+    # Try to initialise the C engine backend (fails gracefully if not built).
+    try:
+        from skull_king.cfr_engine import CEngine
+        if CEngine.available:
+            _C_ENGINE = CEngine(n_players=n_players, heuristic_frac=heuristic_frac)
+            _C_ENGINE.load_adv_weights(adv_weights)
+    except Exception:
+        _C_ENGINE = None
 
 
 def _maybe_reload_weights() -> None:
@@ -199,6 +212,8 @@ def _maybe_reload_weights() -> None:
     if v > _LOCAL_V:
         weights = _SHARED_W["weights"]
         _ADV_NET.load_state_dict(weights)
+        if _C_ENGINE is not None:
+            _C_ENGINE.load_adv_weights(weights)
         _LOCAL_V = v
 
 
@@ -209,9 +224,15 @@ def worker_task(args: tuple) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.nda
     Calls ``_maybe_reload_weights`` first so each worker is guaranteed to see
     the latest adv-net weights before the very first traversal of an iteration
     — no broadcast race possible.
+
+    When the C engine is available (skull_king_engine extension built), delegates
+    to the full C traversal (game loop + MLP inference in C, ~3-4× faster).
+    Falls back to Python traversal automatically if C engine is absent.
     """
     _maybe_reload_weights()
     traverser, seed, n_players = args
+    if _C_ENGINE is not None:
+        return _C_ENGINE.traverse(traverser, seed)
     return traverse(traverser, _ADV_NET, _UTIL_ENV, seed, n_players)
 
 
