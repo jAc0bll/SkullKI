@@ -1,0 +1,47 @@
+# Deep CFR — H100 SXM config
+# Run:  python -m skull_king.training.cfr.train --config cfr_config_h100.yaml
+#
+# H100 SXM characteristics:
+#   - GPU training: 1000 steps × batch 4096 on H100 ≈ 0.5–1s (vs 37s on CPU)
+#   - C engine (Linux native, AVX2): ~8ms/traversal
+#   - Pod vCPUs: typically 16–32 (check with `nproc`; adjust num_workers)
+#
+# Tuning (16 workers assumed):
+#   collection:  8ms × 4000 traversals / 16 workers ≈ 2s/iter
+#   net training: 1000 steps × batch 4096, 2 nets ≈ 1s/iter  (GPU)
+#   total: ~3–4s/iter × 2500 = ~2.5h
+#
+# If nproc > 16: set num_workers to nproc-2 and traversals_per_player=2000.
+# PyTorch auto-detects CUDA — no code changes needed.
+#
+# Memory budget (system RAM):
+#   adv_buf  (5M × 1392 B) ≈  7 GB
+#   strat_buf (8M × 1384 B) ≈ 11 GB
+#   workers + torch overhead  ≈  5 GB
+#   total ≈ 23 GB  (H100 pods have 90–500 GB — no issue)
+
+n_players: 4
+env_seed: 42
+
+n_cfr_iterations: 2500
+traversals_per_player: 1000   # 4000 traversals/iter total; bump to 2000 if nproc >= 32
+num_workers: 16               # set to nproc-2 (e.g. 30 for 32-vCPU pod)
+
+heuristic_frac: 0.4
+
+net_hidden: [512, 512]
+
+adv_lr: 5.0e-4
+adv_batch_size: 4096          # H100 saturates best at large batches; 4096 = sweet spot
+adv_train_steps: 1000         # GPU does 1000 steps in ~0.5s — use the extra capacity
+adv_buffer_capacity: 5_000_000
+
+strat_lr: 5.0e-4
+strat_batch_size: 4096
+strat_train_steps: 1000
+strat_buffer_capacity: 8_000_000
+
+eval_every_n_iters: 100
+checkpoint_every_n_iters: 250
+model_dir: models/skull_king
+run_name: cfr_v6_h100
