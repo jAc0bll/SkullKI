@@ -1,25 +1,33 @@
-# Deep CFR — H100 SXM config (224-vCPU / 8xH100 node)
+# Deep CFR -- H100 SXM config (224-vCPU node)
 # Run:  python -m skull_king.training.cfr.train --config cfr_config_h100.yaml
 #
-# Tuning (224 vCPU, C engine ~8ms/traversal, single H100 for net training):
-#   collection:  8ms x 20000 traversals / 220 workers =~ 0.7s/iter
+# Bottleneck: IPC pickling of results, not compute.
+#   Each traversal returns ~55 KB numpy arrays through Unix pipes.
+#   20000 traversals = 1.1 GB/iter IPC -> 42s. 2000 traversals = 110 MB -> fast.
+#
+# Tuning (64 workers, C engine ~8ms/traversal, H100 for net training):
+#   collection:  8ms x 2000 traversals / 64 workers =~ 0.25s/iter
+#   IPC result transfer: 2000 x 55 KB =~ 110 MB/iter  (fast)
 #   net training: 2000 steps x batch 4096, 2 nets    =~ 1-2s/iter  (GPU)
 #   total: ~2-3s/iter x 2500 = ~1.5h
 #
-# PyTorch auto-detects CUDA -- no code changes needed.
+# Why not more workers?
+#   Adding workers does not reduce IPC volume -- each traversal still ships
+#   the same result payload. More workers only help if compute is the limit;
+#   here IPC is the limit, so 64 is the sweet spot.
 #
 # Memory budget (system RAM):
-#   adv_buf  (20M x 1392 B) =~ 28 GB
-#   strat_buf (30M x 1384 B) =~ 41 GB
+#   adv_buf  (5M x 1392 B) =~  7 GB
+#   strat_buf (8M x 1384 B) =~ 11 GB
 #   workers + torch overhead =~  5 GB
-#   total =~ 74 GB  (DGX nodes have 1-2 TB RAM -- fine)
+#   total =~ 23 GB
 
 n_players: 4
 env_seed: 42
 
 n_cfr_iterations: 2500
-traversals_per_player: 5000   # 20000 traversals/iter; 220 workers -> ~0.7s collection
-num_workers: 220              # nproc=224, leave 4 for main process + OS
+traversals_per_player: 500    # 2000 total; IPC = 110 MB/iter (fast)
+num_workers: 64               # IPC-limited: more workers don't help beyond this
 
 heuristic_frac: 0.4
 
@@ -27,13 +35,13 @@ net_hidden: [512, 512]
 
 adv_lr: 5.0e-4
 adv_batch_size: 4096          # H100 saturates best at large batches
-adv_train_steps: 2000         # GPU does 2000 steps in ~1s -- use the headroom
-adv_buffer_capacity: 20_000_000
+adv_train_steps: 2000         # GPU does 2000 steps in ~1s
+adv_buffer_capacity: 5_000_000
 
 strat_lr: 5.0e-4
 strat_batch_size: 4096
 strat_train_steps: 2000
-strat_buffer_capacity: 30_000_000
+strat_buffer_capacity: 8_000_000
 
 eval_every_n_iters: 100
 checkpoint_every_n_iters: 250
