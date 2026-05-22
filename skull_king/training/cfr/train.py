@@ -46,6 +46,10 @@ class CFRConfig:
     strat_train_steps: int = 500       # gradient steps per iteration (fixed budget)
     strat_buffer_capacity: int = 2_000_000
 
+    # Opponent pool: fraction of non-traverser decisions played by HeuristicAgent.
+    # 0.0 = pure self-play (old behaviour); 0.4 = 40% heuristic opponents.
+    heuristic_frac: float = 0.0
+
     # Logging / output
     eval_every_n_iters: int = 50
     checkpoint_every_n_iters: int = 100

@@ -5,6 +5,68 @@ from typing import Optional
 
 from skull_king.cards import Card, CardType, Suit, TigressMode, TRUMP_SUIT
 
+# ── C extension (built separately; falls back to pure Python gracefully) ──
+try:
+    from skull_king._core.skull_king_core import (
+        resolve_trick     as _c_resolve_trick,
+        legal_cards_mask  as _c_legal_cards_mask,
+    )
+    _C_AVAILABLE = True
+except ImportError:
+    _C_AVAILABLE = False
+
+# Integer encodings shared with skull_king_core.c (must stay in sync).
+_CT_INT: dict[CardType, int] = {
+    CardType.NUMBERED:   0,
+    CardType.ESCAPE:     1,
+    CardType.PIRATE:     2,
+    CardType.MERMAID:    3,
+    CardType.SKULL_KING: 4,
+    CardType.TIGRESS:    5,
+}
+
+# Fast decoders from Card._hash — avoids dict lookup per card.
+# _hash 0-55 → NUMBERED (suit = _hash//14, value = _hash%14+1)
+# _hash 56 → ESCAPE (CT=1), 57 → PIRATE (2), 58 → MERMAID (3),
+#            59 → SKULL_KING (4), 60 → TIGRESS (5)
+_HASH_TO_CT_INT: tuple[int, ...] = (
+    *(0 for _ in range(56)),    # NUMBERED
+    1, 2, 3, 4, 5,              # special types
+)
+_HASH_TO_SUIT_INT: tuple[int, ...] = (
+    *(h // 14 for h in range(56)),   # 0=BLACK 1=YELLOW 2=GREEN 3=PURPLE
+    *(-1 for _ in range(5)),         # specials have no suit
+)
+_HASH_TO_VALUE: tuple[int, ...] = (
+    *(h % 14 + 1 for h in range(56)),
+    *(0 for _ in range(5)),
+)
+
+
+def _pc_to_c_tuple(pc: PlayedCard) -> tuple:  # type: ignore[name-defined]
+    """(eff_type_int, suit_int, value_int, play_order, player_index) for C."""
+    et = pc.effective_type
+    if et == CardType.NUMBERED:
+        h = pc.card._hash
+        return (_HASH_TO_CT_INT[h], _HASH_TO_SUIT_INT[h], _HASH_TO_VALUE[h],
+                pc.play_order, pc.player_index)
+    return (_CT_INT[et], -1, 0, pc.play_order, pc.player_index)
+
+
+def _pc_to_led_c_tuple(pc: PlayedCard) -> tuple:  # type: ignore[name-defined]
+    """(card_type_int, suit_int, play_order) for legal_cards_mask played list."""
+    et = pc.effective_type
+    if et == CardType.NUMBERED:
+        h = pc.card._hash
+        return (0, _HASH_TO_SUIT_INT[h], pc.play_order)
+    return (1, -1, pc.play_order)   # any non-NUMBERED type (won't set led_suit)
+
+
+def _card_to_c_tuple(card: Card) -> tuple:
+    """(card_type_int, suit_int) for legal_cards_mask hand list."""
+    h = card._hash
+    return (_HASH_TO_CT_INT[h], _HASH_TO_SUIT_INT[h])
+
 # Special card types that can trigger the Black-14 bonus when they win a trick.
 _BONUS_ELIGIBLE_WINNERS = frozenset(
     {CardType.SKULL_KING, CardType.MERMAID, CardType.PIRATE}
@@ -82,6 +144,16 @@ class Trick:
           play one (or a special). Off-suit including Black are only allowed when
           the player is void in the led suit.
         """
+        if not self.played_cards:
+            return list(hand)
+
+        if _C_AVAILABLE:
+            hand_data   = [_card_to_c_tuple(c) for c in hand]
+            played_data = [_pc_to_led_c_tuple(pc) for pc in self.played_cards]
+            mask = _c_legal_cards_mask(hand_data, played_data)
+            return [c for c, m in zip(hand, mask) if m]
+
+        # Pure-Python fallback
         suit = self.led_suit
         if suit is None:
             return list(hand)
@@ -101,6 +173,18 @@ class Trick:
         """Determine the trick winner following the spec §5 algorithm exactly."""
         if not self.played_cards:
             raise ValueError("Cannot resolve an empty trick")
+
+        if _C_AVAILABLE:
+            cards_data = [_pc_to_c_tuple(pc) for pc in self.played_cards]
+            winner_player, bonus = _c_resolve_trick(cards_data)
+            winner_pc = next(
+                pc for pc in self.played_cards if pc.player_index == winner_player
+            )
+            return TrickResult(
+                winner_player_index=winner_player,
+                winner_played_card=winner_pc,
+                bonus_points=bonus,
+            )
 
         cards = self.played_cards
         has_sk = any(c.effective_type == CardType.SKULL_KING for c in cards)

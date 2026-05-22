@@ -113,6 +113,21 @@ _SHARED_W = None         # type: ignore[assignment]
 _SHARED_V = None         # type: ignore[assignment]
 _LOCAL_V: int = -1
 
+# Heuristic opponent mixing — set during worker_init.
+_HEURISTIC_FRAC: float = 0.0       # fraction of opponent decisions using HeuristicAgent
+_HEURISTIC = None                   # type: ignore[assignment]
+
+# Card._hash → first canonical play-action slot index.
+# Precomputed at module load so _heuristic_action() avoids per-call dict lookups.
+# Tigress (_hash=60) is excluded — it uses TIGRESS_AS_* dedicated actions.
+_HASH_TO_FIRST_SLOT: tuple[int, ...] = tuple(
+    N_BID_ACTIONS + next(
+        (slot for slot, c in enumerate(_CANONICAL_DECK) if c._hash == h and slot < 69),
+        -1
+    )
+    for h in range(61)
+)
+
 
 def _hidden_from_weights(weights: dict) -> tuple[int, ...]:
     """Infer MLP hidden layer sizes from a state dict.
@@ -138,6 +153,7 @@ def worker_init(
     n_players: int,
     shared_w=None,
     shared_v=None,
+    heuristic_frac: float = 0.0,
 ) -> None:
     """Called once per worker process: build adv-net, util env, install shared-
     memory handles for the lock-free weight broadcast.
@@ -152,6 +168,13 @@ def worker_init(
     # Force single-threaded torch to avoid deadlock on any linear layer call.
     torch.set_num_threads(1)
     global _ADV_NET, _UTIL_ENV, _SHARED_W, _SHARED_V, _LOCAL_V
+    global _HEURISTIC, _HEURISTIC_FRAC
+    _HEURISTIC_FRAC = heuristic_frac
+    if heuristic_frac > 0.0:
+        from skull_king.agents import HeuristicAgent as _HA
+        _HEURISTIC = _HA()
+    else:
+        _HEURISTIC = None
     hidden = _hidden_from_weights(adv_weights)
     _ADV_NET = AdvantageNet(hidden=hidden)
     _ADV_NET.load_state_dict(adv_weights)
@@ -195,6 +218,26 @@ def worker_task(args: tuple) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.nda
 # ---------------------------------------------------------------------------
 # Core traversal
 # ---------------------------------------------------------------------------
+
+def _heuristic_action(engine, p: int) -> int:
+    """Ask the cached HeuristicAgent to pick an action for opponent player p.
+
+    Calls engine.get_state() once (O(n_players) freeze) then delegates to
+    the rule-based heuristic.  Only called for the fraction of opponent
+    decisions controlled by _HEURISTIC_FRAC, so the amortised overhead is
+    acceptable.
+    """
+    from skull_king.game_state import GamePhase as _GP
+    state = engine.get_state()
+    if engine._phase == _GP.BIDDING:
+        return _HEURISTIC.bid(state, p)   # bid value == action index directly
+    card, mode = _HEURISTIC.play(state, p)
+    if mode == TigressMode.PIRATE:
+        return TIGRESS_AS_PIRATE_ACTION
+    if mode == TigressMode.ESCAPE:
+        return TIGRESS_AS_ESCAPE_ACTION
+    return _HASH_TO_FIRST_SLOT[card._hash]
+
 
 def traverse(
     traverser: int,
@@ -279,6 +322,12 @@ def traverse(
             t_indices.append(len(s_obs) - 1)
             t_actions.append(action)
             t_adv_ests.append(adv_est)
+        elif _HEURISTIC is not None and float(rng.random()) < _HEURISTIC_FRAC:
+            # Replace opponent action with heuristic policy for richer training signal.
+            try:
+                action = _heuristic_action(engine, p)
+            except Exception:
+                pass  # fall back to strategy-sampled action on any error
 
         # Advance game state via the *_no_state variants — they skip the
         # ``return self.get_state()`` step inside the engine and avoid
@@ -314,11 +363,19 @@ def traverse(
         adv_actions = np.array(t_actions, dtype=np.int64)
         # Reuse the strategy we already computed (s_strats) — no second
         # regret_match call.
-        for k, (idx, adv_est) in enumerate(zip(t_indices, t_adv_ests)):
-            strat = s_strats[idx]
-            mask_k = s_masks[idx]
+        for k in range(n_adv):
+            idx      = t_indices[k]
+            adv_est  = t_adv_ests[k]
+            strat    = s_strats[idx]
+            mask_k   = s_masks[idx]
             legal_idx = np.where(mask_k)[0]
             baseline = float(np.dot(strat[legal_idx], adv_est[legal_idx]))
-            adv_targets[k, t_actions[k]] = utility - baseline
+            a_taken  = t_actions[k]
+            # IS correction: avoid extreme targets when prob is tiny
+            prob_taken = max(float(strat[a_taken]), 0.05)
+            # Fill counterfactual estimate for ALL legal actions (Fix A)
+            adv_targets[k, legal_idx] = adv_est[legal_idx] - baseline
+            # Override taken action with real IS-corrected utility signal (Fix B)
+            adv_targets[k, a_taken] = (utility - baseline) / prob_taken
 
     return adv_obs, adv_masks, adv_targets, adv_actions, strat_obs, strat_masks, strat_strategies

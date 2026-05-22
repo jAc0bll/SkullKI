@@ -152,7 +152,8 @@ class DeepCFRTrainer:
             persistent_pool = self._ctx.Pool(
                 processes=cfg.num_workers,
                 initializer=worker_init,
-                initargs=(init_adv, cfg.n_players, self._shared_w, self._shared_v),
+                initargs=(init_adv, cfg.n_players, self._shared_w, self._shared_v,
+                          cfg.heuristic_frac),
             )
 
         try:
@@ -255,7 +256,7 @@ class DeepCFRTrainer:
 
         if persistent_pool is None:
             # Single-process fallback (num_workers <= 1).
-            worker_init(adv_weights, cfg.n_players)  # shared_w/v stay None
+            worker_init(adv_weights, cfg.n_players, heuristic_frac=cfg.heuristic_frac)
             results = (worker_task(t) for t in tasks)
         else:
             results = persistent_pool.imap_unordered(worker_task, tasks, chunksize=4)
@@ -306,15 +307,16 @@ class DeepCFRTrainer:
         self.adv_net.train()
         total = 0.0
         for _ in range(effective_steps):
-            obs, _, targets, actions = self.adv_buf.sample(cfg.adv_batch_size)
-            obs_t = torch.FloatTensor(obs).to(self.device)
+            obs, masks, targets, _ = self.adv_buf.sample(cfg.adv_batch_size)
+            obs_t     = torch.FloatTensor(obs).to(self.device)
             targets_t = torch.FloatTensor(targets).to(self.device)
-            actions_t = torch.LongTensor(actions).to(self.device)
+            mask_t    = torch.BoolTensor(masks).to(self.device)
 
             pred = self.adv_net(obs_t)                              # [B, n_actions]
-            taken_pred = pred.gather(1, actions_t.unsqueeze(1)).squeeze(1)
-            taken_tgt = targets_t.gather(1, actions_t.unsqueeze(1)).squeeze(1)
-            loss = nn.functional.mse_loss(taken_pred, taken_tgt)
+            # Loss over ALL legal actions — counterfactual targets now populated
+            # for every legal slot (not just the taken action), giving the net
+            # 10-15× more gradient signal per sample (Fix A).
+            loss = nn.functional.mse_loss(pred[mask_t], targets_t[mask_t])
 
             self.adv_opt.zero_grad()
             loss.backward()

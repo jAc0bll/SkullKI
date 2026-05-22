@@ -26,6 +26,10 @@ n_cfr_iterations: 2500
 traversals_per_player: 500
 num_workers: 8
 
+# 40% of opponent decisions use the HeuristicAgent (Fix C).
+# Trains the agent against realistic play, breaking the self-play plateau.
+heuristic_frac: 0.4
+
 net_hidden: [512, 512]
 
 adv_lr: 5.0e-4
