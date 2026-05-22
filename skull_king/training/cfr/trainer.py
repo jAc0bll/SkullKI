@@ -7,6 +7,9 @@ import sys
 import time
 from typing import TYPE_CHECKING
 
+if sys.platform != "win32":
+    import resource
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -135,6 +138,17 @@ class DeepCFRTrainer:
         # memory traffic that slows rather than speeds the small matmuls.
         if cfg.num_workers > 1:
             torch.set_num_threads(min(8, torch.get_num_threads()))
+
+        # Raise the open-file limit before spawning the pool.
+        # Each worker needs ~5 FDs (pipes + Manager socket); 220 workers easily
+        # exceeds the default limit of 1024.  65536 is safe for any pod size.
+        if sys.platform != "win32":
+            try:
+                soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+                target = max(soft, 65536)
+                resource.setrlimit(resource.RLIMIT_NOFILE, (target, max(hard, target)))
+            except ValueError:
+                pass  # container hard limit below 65536; ulimit -n 65536 manually
 
         persistent_pool = None
         self._manager = None
