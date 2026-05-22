@@ -128,20 +128,13 @@ class DeepCFRTrainer:
         self._is_windows = sys.platform == "win32"
         self._ctx = multiprocessing.get_context("spawn" if self._is_windows else "fork")
 
-        # Set torch threads for main-process net training.
-        # Workers (separate processes) always use 1 thread via worker_init.
-        # During training the worker processes are idle, so the main process
-        # can safely use many cores.  On GPU boxes the GPU does the heavy
-        # lifting and 8 threads is enough; on CPU-only servers more threads
-        # cut training time significantly (sweet spot ~16-24 for 512×512 nets,
-        # batch 1024 — beyond ~24 threads, BLAS synchronisation overhead grows).
+        # Limit torch threads in the main process.  Workers each call
+        # torch.set_num_threads(1) in worker_init, so they are unaffected.
+        # 8 threads is the sweet spot for our batch size (1024) on both GPU
+        # boxes and CPU-only NUMA servers — more threads cause cross-socket
+        # memory traffic that slows rather than speeds the small matmuls.
         if cfg.num_workers > 1:
-            if self.device.type == "cpu":
-                # CPU-only: use up to half the available cores for training
-                n_train_threads = min(max(8, torch.get_num_threads() // 2), 24)
-            else:
-                n_train_threads = min(8, torch.get_num_threads())
-            torch.set_num_threads(n_train_threads)
+            torch.set_num_threads(min(8, torch.get_num_threads()))
 
         persistent_pool = None
         self._manager = None
@@ -317,15 +310,18 @@ class DeepCFRTrainer:
         total = 0.0
         for _ in range(effective_steps):
             obs, masks, targets, _ = self.adv_buf.sample(cfg.adv_batch_size)
-            obs_t     = torch.FloatTensor(obs).to(self.device)
-            targets_t = torch.FloatTensor(targets).to(self.device)
-            mask_t    = torch.BoolTensor(masks).to(self.device)
+            # from_numpy is zero-copy (read-only view); contiguous() ensures
+            # the tensor is writable before the forward pass modifies gradients.
+            obs_t     = torch.from_numpy(obs).float().to(self.device)
+            targets_t = torch.from_numpy(targets).float().to(self.device)
+            mask_f    = torch.from_numpy(masks).float().to(self.device)
 
             pred = self.adv_net(obs_t)                              # [B, n_actions]
-            # Loss over ALL legal actions — counterfactual targets now populated
-            # for every legal slot (not just the taken action), giving the net
-            # 10-15× more gradient signal per sample (Fix A).
-            loss = nn.functional.mse_loss(pred[mask_t], targets_t[mask_t])
+            # Element-wise masked MSE: avoids the boolean-gather (pred[mask_t])
+            # which allocates a variable-length 1D tensor on CPU and is slow.
+            # Mathematically identical: mean over legal (mask=1) action slots.
+            diff = (pred - targets_t) * mask_f
+            loss = (diff * diff).sum() / mask_f.sum().clamp(min=1)
 
             self.adv_opt.zero_grad()
             loss.backward()
@@ -347,9 +343,9 @@ class DeepCFRTrainer:
         total = 0.0
         for _ in range(effective_steps):
             obs, masks, strategies = self.strat_buf.sample(cfg.strat_batch_size)
-            obs_t = torch.FloatTensor(obs).to(self.device)
-            mask_t = torch.BoolTensor(masks).to(self.device)
-            strat_t = torch.FloatTensor(strategies).to(self.device)
+            obs_t   = torch.from_numpy(obs).float().to(self.device)
+            mask_t  = torch.from_numpy(masks).to(self.device)
+            strat_t = torch.from_numpy(strategies).float().to(self.device)
 
             logits = self.strat_net(obs_t)
             logits = logits.masked_fill(~mask_t, float("-inf"))

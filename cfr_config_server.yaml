@@ -1,28 +1,36 @@
-# Deep CFR — server config (50-thread CPU)
-# Run: python -m skull_king.training.cfr.train --config cfr_config_server.yaml
+# Deep CFR — 56-core CPU server config (no GPU)
+# Run:  python -m skull_king.training.cfr.train --config cfr_config_server.yaml
+#
+# Tuning (56-core CPU, C engine ~17ms/traversal):
+#   collection:  17ms × 8000 / 48 workers ≈ 2.8s/iter
+#   net training: 200 steps × ~20ms/step × 2 nets ≈ 8s/iter  (bottleneck)
+#   total: ~11s/iter × 2500 = ~7.5h
+#
+# adv_train_steps=200 (not 600): 4× more traversals/iter means 4× richer data,
+# fewer passes needed. CPU training is the bottleneck — this is the key lever.
 
 n_players: 4
 env_seed: 42
 
-# 1000 iters × 200 traversals × 4 players = 800 000 game simulations
-# With 44 workers: ~3-5h. Utility fix (relative score) requires fresh run.
-n_cfr_iterations: 1000
-traversals_per_player: 200
-num_workers: 44
+n_cfr_iterations: 2500
+traversals_per_player: 2000
+num_workers: 48
+
+heuristic_frac: 0.4
 
 net_hidden: [512, 512]
 
-adv_lr: 1.0e-3
+adv_lr: 5.0e-4
 adv_batch_size: 1024
-adv_train_epochs: 8
+adv_train_steps: 200
 adv_buffer_capacity: 2_000_000
 
-strat_lr: 1.0e-3
+strat_lr: 5.0e-4
 strat_batch_size: 1024
-strat_train_epochs: 8
-strat_buffer_capacity: 2_000_000
+strat_train_steps: 200
+strat_buffer_capacity: 3_000_000
 
-eval_every_n_iters: 50
-checkpoint_every_n_iters: 100
+eval_every_n_iters: 100
+checkpoint_every_n_iters: 250
 model_dir: models/skull_king
-run_name: cfr_v2_server
+run_name: cfr_v6_server
