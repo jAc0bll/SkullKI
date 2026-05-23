@@ -509,6 +509,8 @@ class SplitDeepCFRTrainer:
             _test = torch.ones(128, 128, device=self.device) @ torch.ones(128, 128, device=self.device)
             _p(f"  GPU verified: {gpu_name}  ({gpu_gb:.0f} GB)  [matmul OK]")
             del _test
+        from skull_king.cfr_engine import SplitCEngine
+        _p(f"  C engine: {'active (split traversal ~5ms/game)' if SplitCEngine.available else 'NOT BUILT — using slow Python traversal (35ms/game)'}")
         _p(f"{'='*66}\n")
 
         self._is_windows = sys.platform == "win32"
