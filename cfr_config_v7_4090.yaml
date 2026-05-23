@@ -1,24 +1,24 @@
 # Deep CFR — v7 split-network, RTX 4090 + AMD EPYC 7B13 (64c/128t)
 # Run:  python -m skull_king.training.cfr.train --config cfr_config_v7_4090.yaml
 #
-# Hardware: 64 cores / 128 threads, RTX 4090 24GB, ~128GB RAM
+# Hardware: 64 cores / 128 threads, RTX 4090 24GB, 503 GB RAM
 #
-# Bottleneck: Python _train_net loop (~1.5ms overhead/step, not GPU compute).
-#   CPU traversal:  10k traversals / 100 workers x 5ms  ≈  0.5s
-#   GPU training:   4 nets x 1000 steps x batch 8192    ≈  6-8s
-#   → Expected: ~8-10s/it, GPU ~50-60%
+# Timing (measured):
+#   CPU traversal:  10k traversals / 100 workers x 22ms  ≈  5s
+#   GPU training:   4 nets x 500 steps x batch 16384 + AMP  ≈  10-12s
+#   → Expected: ~15-17s/it
 #
-# Buffer: 8M × 4 bufs × ~1.5 KB/sample ≈ 48 GB — fine for 128 GB machine.
-#   Fills in ~32 iters (10k traversals × ~25 play samples → 250k/iter).
+# Buffer: 8M × 4 bufs × ~1.5 KB/sample ≈ 48 GB
+#   play buf fills in ~15 iters (550k/iter), bid buf in ~80 iters (100k/iter).
 #
-# Cost estimate: ~5000 iters × 9s ≈ 12.5h × $1/h = ~$12.50
+# Cost estimate: ~5000 iters × 16s ≈ 22h × $1/h = ~$22
 
 n_players: 4
 env_seed: 42
 
 n_cfr_iterations: 5000
-traversals_per_player: 2500    # 10k total; CPU done in ~0.5s with C-engine
-num_workers: 100                # 128 threads - 28 for OS/main/manager
+traversals_per_player: 2500    # 10k total
+num_workers: 100                # 128 threads - 28 for OS/main
 
 heuristic_frac: 0.4
 
@@ -27,13 +27,13 @@ bid_hidden: [256, 256]
 play_hidden: [512, 512]
 
 adv_lr: 5.0e-4
-adv_batch_size: 8192
-adv_train_steps: 1000
+adv_batch_size: 16384           # 2x larger batch → better GPU utilization
+adv_train_steps: 500            # halved; AMP compensates with better throughput
 adv_buffer_capacity: 8_000_000
 
 strat_lr: 5.0e-4
-strat_batch_size: 8192
-strat_train_steps: 1000
+strat_batch_size: 16384
+strat_train_steps: 500
 strat_buffer_capacity: 8_000_000
 
 eval_every_n_iters: 100

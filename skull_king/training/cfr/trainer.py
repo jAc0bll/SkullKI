@@ -486,6 +486,9 @@ class SplitDeepCFRTrainer:
 
         self._rng = np.random.default_rng(seed)
         os.makedirs(cfg.model_dir, exist_ok=True)
+        # GradScaler enables fp16 matmuls on CUDA (2x throughput on 4090 tensor cores).
+        # enabled=False is a transparent no-op on CPU/DirectML.
+        self._scaler = torch.cuda.amp.GradScaler(enabled=(self.device.type == "cuda"))
 
     # ------------------------------------------------------------------
     # Main loop
@@ -745,32 +748,38 @@ class SplitDeepCFRTrainer:
             return 0.0
         effective_steps = min(max_steps, max(1, len(buf) // (batch_size // 4)))
         net.train()
-        total = 0.0
+        total = torch.zeros(1, device=self.device)
+        amp_ctx = torch.amp.autocast(device_type=self.device.type,
+                                     enabled=(self.device.type == "cuda"))
         for _ in range(effective_steps):
             if mode == "adv":
                 obs, masks, targets, _ = buf.sample(batch_size)
                 obs_t = torch.from_numpy(obs).float().to(self.device)
                 tgt_t = torch.from_numpy(targets).float().to(self.device)
                 mask_f = torch.from_numpy(masks).float().to(self.device)
-                pred = net(obs_t)
-                diff = (pred - tgt_t) * mask_f
-                loss = (diff * diff).sum() / mask_f.sum().clamp(min=1)
+                with amp_ctx:
+                    pred = net(obs_t)
+                    diff = (pred - tgt_t) * mask_f
+                    loss = (diff * diff).sum() / mask_f.sum().clamp(min=1)
             else:
                 obs, masks, strats = buf.sample(batch_size)
                 obs_t = torch.from_numpy(obs).float().to(self.device)
                 mask_t = torch.from_numpy(masks).to(self.device)
                 strat_t = torch.from_numpy(strats).float().to(self.device)
-                logits = net(obs_t).masked_fill(~mask_t, float("-inf"))
-                log_probs = torch.log_softmax(logits, dim=-1)
-                loss = -(strat_t * log_probs).nan_to_num(0.0).sum(dim=-1).mean()
+                with amp_ctx:
+                    logits = net(obs_t).masked_fill(~mask_t, float("-inf"))
+                    log_probs = torch.log_softmax(logits, dim=-1)
+                    loss = -(strat_t * log_probs).nan_to_num(0.0).sum(dim=-1).mean()
 
             opt.zero_grad()
-            loss.backward()
+            self._scaler.scale(loss).backward()
+            self._scaler.unscale_(opt)
             torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
-            opt.step()
-            total += loss.item()
+            self._scaler.step(opt)
+            self._scaler.update()
+            total += loss.detach()  # stay on GPU — avoid per-step CUDA sync
         net.eval()
-        return total / effective_steps
+        return float(total.item() / effective_steps)  # single sync at end
 
     def _evaluate(self, t: int) -> None:
         from skull_king.training.cfr.agent import SplitCFRAgent
