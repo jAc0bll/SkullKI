@@ -1,20 +1,21 @@
-# Deep CFR — v7 split-network, RTX 5090 RunPod config (~8h)
+# Deep CFR — v7 split-network, RTX 5090 RunPod config
 # Run:  python -m skull_king.training.cfr.train --config cfr_config_v7_5090.yaml
 #
 # Timing estimate (Linux fork, 60 workers, Python traversal):
-#   Collection: 2000 traversals / 60 workers x ~28ms/traversal  =  ~0.9s
-#   Net training: 4 nets x 3000 steps x batch 8192 on 5090      =  ~1.5s
-#   IPC + overhead:                                              =  ~0.6s
-#   Total:                                                       =  ~3s/iter
-#   Budget: 8h = 28800s / 3s                                    =  ~9600 iters
-#   Target:                                                      =  5000 iters
+#   CPU traversal:  12k traversals / 60 workers x 35ms  ≈  7s  (+IPC → ~10s)
+#   GPU training:   3000 steps x 4 nets x batch 8192    ≈  10s
+#   → ~50% GPU utilization (CPU game sim is the hard limit)
+#
+# Buffer sizing: need buf ≥ train_steps × (batch // 4) = 3000 × 2048 = 6.1M
+#   8M × 4 bufs × ~1.5 KB/sample ≈ 48 GB — fine for 405 GB machine.
+#   Fills in ~25 iters (12k traversals × ~25 play samples → 300k/iter).
 
 n_players: 4
 env_seed: 42
 
-n_cfr_iterations: 5000
-traversals_per_player: 500
-num_workers: 60       # set by setup_runpod.sh from nproc
+n_cfr_iterations: 2500
+traversals_per_player: 3000    # 12k total; 60 workers × 35ms ≈ 7s/iter
+num_workers: 60                 # leave 4 cores for main process + OS
 
 heuristic_frac: 0.4
 
@@ -23,9 +24,9 @@ bid_hidden: [256, 256]
 play_hidden: [512, 512]
 
 adv_lr: 5.0e-4
-adv_batch_size: 8192          # large batch — 5090 has 34 GB, our nets are tiny
-adv_train_steps: 3000         # more steps per iter to actually use the GPU
-adv_buffer_capacity: 5_000_000
+adv_batch_size: 8192            # saturates 5090 per step
+adv_train_steps: 3000           # needs buf ≥ 6.1M to hit all 3000 steps
+adv_buffer_capacity: 8_000_000  # ~48 GB total across 4 bufs; fills in ~25 iters
 
 strat_lr: 5.0e-4
 strat_batch_size: 8192
