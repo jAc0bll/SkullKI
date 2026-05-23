@@ -11,12 +11,12 @@
 # Buffer: 8M × 4 bufs × ~1.5 KB/sample ≈ 48 GB
 #   play buf fills in ~15 iters (550k/iter), bid buf in ~80 iters (100k/iter).
 #
-# Cost estimate: ~5000 iters × 19s ≈ 26h × $1/h = ~$26
+# Cost estimate: ~3000 iters × 10s ≈ 8.5h × $1/h = ~$8.50
 
 n_players: 4
 env_seed: 42
 
-n_cfr_iterations: 5000
+n_cfr_iterations: 3000          # 3000 iters is enough for a strong agent (~8h)
 traversals_per_player: 2500    # 10k total
 num_workers: 100                # 128 threads - 28 for OS/main
 
@@ -27,13 +27,13 @@ bid_hidden: [256, 256]
 play_hidden: [512, 512]
 
 adv_lr: 5.0e-4
-adv_batch_size: 8192            # keep small: CPU buffer sampling dominates per-step cost
-adv_train_steps: 500            # halved from 1000; AMP cuts GPU time ~2x on top
+adv_batch_size: 8192
+adv_train_steps: 200            # net only needs to approximate, not perfectly converge
 adv_buffer_capacity: 8_000_000
 
 strat_lr: 5.0e-4
 strat_batch_size: 8192
-strat_train_steps: 500
+strat_train_steps: 200
 strat_buffer_capacity: 8_000_000
 
 eval_every_n_iters: 100
