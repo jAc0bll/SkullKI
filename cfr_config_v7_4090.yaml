@@ -3,20 +3,20 @@
 #
 # Hardware: 64 cores / 128 threads, RTX 4090 24GB, ~128GB RAM
 #
-# With C-engine (~5ms/traversal) and 100 workers:
+# Bottleneck: Python _train_net loop (~1.5ms overhead/step, not GPU compute).
 #   CPU traversal:  10k traversals / 100 workers x 5ms  ≈  0.5s
-#   GPU training:   4 nets x 3000 steps x batch 8192    ≈  15-20s
-#   → GPU is the bottleneck: ~95%+ utilization
+#   GPU training:   4 nets x 1000 steps x batch 8192    ≈  6-8s
+#   → Expected: ~8-10s/it, GPU ~50-60%
 #
 # Buffer: 8M × 4 bufs × ~1.5 KB/sample ≈ 48 GB — fine for 128 GB machine.
 #   Fills in ~32 iters (10k traversals × ~25 play samples → 250k/iter).
 #
-# Cost estimate: ~3000 iters × 18s ≈ 15h × $1/h = ~$15
+# Cost estimate: ~5000 iters × 9s ≈ 12.5h × $1/h = ~$12.50
 
 n_players: 4
 env_seed: 42
 
-n_cfr_iterations: 3000
+n_cfr_iterations: 5000
 traversals_per_player: 2500    # 10k total; CPU done in ~0.5s with C-engine
 num_workers: 100                # 128 threads - 28 for OS/main/manager
 
@@ -28,12 +28,12 @@ play_hidden: [512, 512]
 
 adv_lr: 5.0e-4
 adv_batch_size: 8192
-adv_train_steps: 3000
+adv_train_steps: 1000
 adv_buffer_capacity: 8_000_000
 
 strat_lr: 5.0e-4
 strat_batch_size: 8192
-strat_train_steps: 3000
+strat_train_steps: 1000
 strat_buffer_capacity: 8_000_000
 
 eval_every_n_iters: 100
