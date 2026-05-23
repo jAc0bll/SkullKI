@@ -51,8 +51,9 @@ else
     echo "      Created new venv: $VENV"
 fi
 
-"$VENV/bin/pip" install --quiet --root-user-action=ignore -r "$REPO_DIR/requirements.txt"
-echo "      Dependencies installed."
+echo "      Installing/checking requirements (may take a minute)..."
+"$VENV/bin/pip" install --root-user-action=ignore -r "$REPO_DIR/requirements.txt"
+echo "      Dependencies OK."
 
 # ── 3. Verify GPU ─────────────────────────────────────────────────────────
 echo "[3/6] GPU check..."
