@@ -100,9 +100,10 @@ class StrategyNet(_MLP):
         mask_np: np.ndarray,
         deterministic: bool = True,
     ) -> int:
-        obs_t = torch.from_numpy(obs_np).unsqueeze(0)
+        dev = next(self.parameters()).device
+        obs_t = torch.from_numpy(obs_np).unsqueeze(0).to(dev)
         logits = self.forward(obs_t)[0].clone()  # clone so masked_fill is writable
-        mask_t = torch.from_numpy(mask_np)
+        mask_t = torch.from_numpy(mask_np).to(dev)
         logits[~mask_t] = float("-inf")
         if deterministic:
             return int(logits.argmax().item())
@@ -112,11 +113,12 @@ class StrategyNet(_MLP):
     @torch.inference_mode()
     def predict_probs(self, obs_np: np.ndarray, mask_np: np.ndarray) -> np.ndarray:
         """Return softmax probability distribution over all actions (illegal=0)."""
-        obs_t = torch.from_numpy(obs_np).unsqueeze(0)
+        dev = next(self.parameters()).device
+        obs_t = torch.from_numpy(obs_np).unsqueeze(0).to(dev)
         logits = self.forward(obs_t)[0].clone()
-        mask_t = torch.from_numpy(mask_np)
+        mask_t = torch.from_numpy(mask_np).to(dev)
         logits[~mask_t] = float("-inf")
-        probs = torch.softmax(logits, dim=-1).numpy().copy()
+        probs = torch.softmax(logits, dim=-1).cpu().numpy().copy()
         probs[~mask_np] = 0.0
         return probs
 
