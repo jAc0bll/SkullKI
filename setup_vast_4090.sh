@@ -14,7 +14,7 @@ else
     REPO_DIR="/root/SkullKI"
 fi
 VENV="$REPO_DIR/venv"
-PY="$VENV/bin/python"
+PY=""  # set after venv detection in step 2
 CONFIG="$REPO_DIR/cfr_config_v7_4090.yaml"
 LOG="$REPO_DIR/training_v7_4090.log"
 SESSION="cfr_v7"
@@ -36,15 +36,22 @@ ls "$REPO_DIR"/*.yaml
 
 # ── 2. Venv + dependencies ────────────────────────────────────────────────
 echo "[2/6] Setting up venv..."
-if [ ! -f "$VENV/bin/activate" ]; then
-    python3 -m venv "$VENV"
-    echo "      Created venv at $VENV"
+# Vast.ai images ship a pre-built /venv/main (has torch/numpy/etc already).
+# Prefer that over creating a fresh one which can hang on some images.
+if [ -f "/venv/main/bin/activate" ]; then
+    VENV="/venv/main"
+    PY="$VENV/bin/python"
+    echo "      Using Vast.ai system venv: $VENV"
+elif [ -f "$REPO_DIR/venv/bin/activate" ]; then
+    PY="$VENV/bin/python"
+    echo "      Using existing repo venv: $VENV"
 else
-    echo "      Venv already exists — reusing"
+    python3 -m venv "$VENV"
+    PY="$VENV/bin/python"
+    echo "      Created new venv: $VENV"
 fi
 
-"$VENV/bin/pip" install --quiet --upgrade pip
-"$VENV/bin/pip" install --quiet -r "$REPO_DIR/requirements.txt"
+"$VENV/bin/pip" install --quiet --root-user-action=ignore -r "$REPO_DIR/requirements.txt"
 echo "      Dependencies installed."
 
 # ── 3. Verify GPU ─────────────────────────────────────────────────────────
