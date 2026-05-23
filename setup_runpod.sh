@@ -27,8 +27,8 @@ if [ -d "$REPO_DIR/.git" ]; then
     echo "[1/5] Updating repo..."
     git -C "$REPO_DIR" pull --ff-only
 else
-    echo "[1/5] Cloning repo..."
-    git clone "$REPO_URL" "$REPO_DIR"
+    echo "[1/5] Cloning repo (features branch)..."
+    git clone --branch features "$REPO_URL" "$REPO_DIR"
 fi
 cd "$REPO_DIR"
 
