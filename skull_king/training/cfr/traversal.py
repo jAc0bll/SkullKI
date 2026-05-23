@@ -520,6 +520,29 @@ def worker_task_split(args: tuple) -> tuple:
     return traverse_split(traverser, _BID_ADV_NET, _PLAY_ADV_NET, _UTIL_ENV, seed, n_players)
 
 
+def worker_batch_task_split(args_list: list) -> tuple:
+    """Process a batch of traversals and return 14 concatenated arrays.
+
+    Batching reduces IPC pickle overhead from O(n_tasks × 14 arrays) to
+    O(n_batches × 14 arrays) — ~50× fewer pickle calls, eliminating the
+    10-20s collect bottleneck when running 10k traversals.
+    """
+    _maybe_reload_weights_split()
+    results = []
+    for traverser, seed, n_players in args_list:
+        if _C_ENGINE is not None:
+            results.append(_C_ENGINE.traverse(traverser, int(seed)))
+        else:
+            results.append(
+                traverse_split(traverser, _BID_ADV_NET, _PLAY_ADV_NET,
+                               _UTIL_ENV, seed, n_players)
+            )
+    return tuple(
+        np.concatenate([r[i] for r in results], axis=0)
+        for i in range(14)
+    )
+
+
 def traverse_split(
     traverser: int,
     bid_adv_net: BiddingAdvNet,

@@ -42,6 +42,7 @@ from skull_king.training.cfr.traversal import (
     worker_init_split,
     worker_task,
     worker_task_split,
+    worker_batch_task_split,
 )
 
 if TYPE_CHECKING:
@@ -631,16 +632,23 @@ class SplitDeepCFRTrainer:
 
         if persistent_pool is None:
             from skull_king.training.cfr.traversal import (
-                BiddingAdvNet as _BAN, PlayingAdvNet as _PAN,
                 worker_init_split, traverse_split,
             )
             worker_init_split(bid_w, play_w, cfg.n_players,
                               heuristic_frac=cfg.heuristic_frac)
             results = (worker_task_split(t) for t in tasks)
         else:
-            chunksize = max(4, len(tasks) // (cfg.num_workers * 2))
-            results = persistent_pool.imap_unordered(worker_task_split, tasks,
-                                                     chunksize=chunksize)
+            # Batch tasks: one IPC call per worker instead of one per traversal.
+            # Reduces pickle overhead from 140k array objects to ~100.
+            n_batches = cfg.num_workers
+            batch_sz = max(1, len(tasks) // n_batches)
+            task_batches = [
+                tasks[i : i + batch_sz]
+                for i in range(0, len(tasks), batch_sz)
+            ]
+            results = persistent_pool.imap_unordered(
+                worker_batch_task_split, task_batches
+            )
 
         ba_obs, ba_masks, ba_targets, ba_acts = [], [], [], []
         bs_obs, bs_masks, bs_strats = [], [], []
