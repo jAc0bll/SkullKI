@@ -144,7 +144,16 @@ class DeepCFRTrainer:
         # On Windows (spawn): persistent pool avoids per-iteration process creation
         # overhead (~2-4 s × n_iterations); same broadcast mechanism is used.
         self._is_windows = sys.platform == "win32"
-        self._ctx = multiprocessing.get_context("spawn" if self._is_windows else "fork")
+        # forkserver on Linux: the server process is started before CUDA is
+        # initialized in worker processes, avoiding the CUDA+fork deadlock that
+        # occurs when forking a process that already has an active CUDA context.
+        if self._is_windows:
+            ctx_method = "spawn"
+        elif torch.cuda.is_available():
+            ctx_method = "forkserver"
+        else:
+            ctx_method = "fork"
+        self._ctx = multiprocessing.get_context(ctx_method)
 
         # Limit torch threads in the main process.  Workers each call
         # torch.set_num_threads(1) in worker_init, so they are unaffected.
@@ -503,7 +512,13 @@ class SplitDeepCFRTrainer:
         _p(f"{'='*66}\n")
 
         self._is_windows = sys.platform == "win32"
-        self._ctx = multiprocessing.get_context("spawn" if self._is_windows else "fork")
+        if self._is_windows:
+            ctx_method = "spawn"
+        elif torch.cuda.is_available():
+            ctx_method = "forkserver"
+        else:
+            ctx_method = "fork"
+        self._ctx = multiprocessing.get_context(ctx_method)
 
         if cfg.num_workers > 1:
             torch.set_num_threads(min(8, torch.get_num_threads()))
