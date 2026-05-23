@@ -5,7 +5,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from skull_king.env.skull_king_env import ACTION_SPACE_SIZE, OBS_SIZE
+from skull_king.env.skull_king_env import ACTION_SPACE_SIZE, N_BID_ACTIONS, OBS_SIZE
+
+# Action-space sizes for the split-network architecture.
+# BID_ACTION_SIZE: bids 0..10 (same indices as global action space).
+# PLAY_ACTION_SIZE: card slots 0..68 + Tigress-as-ESCAPE (69) + Tigress-as-PIRATE (70).
+BID_ACTION_SIZE = N_BID_ACTIONS   # 11
+PLAY_ACTION_SIZE = 71             # 69 cards + 2 Tigress modes
 
 
 def regret_match(advantages: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -113,3 +119,36 @@ class StrategyNet(_MLP):
         probs = torch.softmax(logits, dim=-1).numpy().copy()
         probs[~mask_np] = 0.0
         return probs
+
+
+# ---------------------------------------------------------------------------
+# Split-network variants
+# ---------------------------------------------------------------------------
+
+
+class BiddingAdvNet(AdvantageNet):
+    """Advantage network for bidding decisions only (output size = 11)."""
+
+    def __init__(self, obs_size: int = OBS_SIZE, hidden: tuple[int, ...] = (256, 256)) -> None:
+        super().__init__(obs_size=obs_size, action_size=BID_ACTION_SIZE, hidden=hidden)
+
+
+class BiddingStratNet(StrategyNet):
+    """Strategy network for bidding decisions only (output size = 11)."""
+
+    def __init__(self, obs_size: int = OBS_SIZE, hidden: tuple[int, ...] = (256, 256)) -> None:
+        super().__init__(obs_size=obs_size, action_size=BID_ACTION_SIZE, hidden=hidden)
+
+
+class PlayingAdvNet(AdvantageNet):
+    """Advantage network for card-play decisions only (output size = 71)."""
+
+    def __init__(self, obs_size: int = OBS_SIZE, hidden: tuple[int, ...] = (512, 512)) -> None:
+        super().__init__(obs_size=obs_size, action_size=PLAY_ACTION_SIZE, hidden=hidden)
+
+
+class PlayingStratNet(StrategyNet):
+    """Strategy network for card-play decisions only (output size = 71)."""
+
+    def __init__(self, obs_size: int = OBS_SIZE, hidden: tuple[int, ...] = (512, 512)) -> None:
+        super().__init__(obs_size=obs_size, action_size=PLAY_ACTION_SIZE, hidden=hidden)

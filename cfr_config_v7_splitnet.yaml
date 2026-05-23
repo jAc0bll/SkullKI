@@ -1,0 +1,47 @@
+# Deep CFR — v7 split-network config
+# Run:  python -m skull_king.training.cfr.train --config cfr_config_v7_splitnet.yaml
+#
+# Key change vs v6: split_nets=True uses separate BiddingNet (256x256) and
+# PlayingNet (512x512) so bidding gradients (hand-strength estimation) no longer
+# interfere with playing gradients (card selection).
+#
+# Diagnostic (v6): CFR bid accuracy 30-37% vs Heuristic 64%; chronic overbidding
+# bias +0.5-0.7 with no convergence over 2000 iters.  Root cause: the shared
+# 512x512 network can't simultaneously learn two fundamentally different tasks
+# from the same output head.
+#
+# Memory budget (split):
+#   bid_adv_buf  (500k × (244*4 + 11*4*2 + 8) B) ≈  ~0.1 GB
+#   bid_strat_buf (500k) ≈ ~0.1 GB
+#   play_adv_buf (2M × (244*4 + 71*4*2 + 8) B)   ≈  ~0.8 GB
+#   play_strat_buf (3M)                           ≈  ~1.2 GB
+#   Total ≈ ~2.5 GB, much less than v6's ~7 GB — more headroom for workers.
+
+n_players: 4
+env_seed: 42
+
+n_cfr_iterations: 2500
+traversals_per_player: 500
+num_workers: 8
+
+heuristic_frac: 0.4
+
+# Enable split-network architecture
+split_nets: true
+bid_hidden: [256, 256]
+play_hidden: [512, 512]
+
+adv_lr: 5.0e-4
+adv_batch_size: 1024
+adv_train_steps: 600
+adv_buffer_capacity: 500_000     # bidding has far fewer samples (~10% of all decisions)
+
+strat_lr: 5.0e-4
+strat_batch_size: 1024
+strat_train_steps: 600
+strat_buffer_capacity: 500_000   # same — bidding buffer stays small by design
+
+eval_every_n_iters: 100
+checkpoint_every_n_iters: 250
+model_dir: models/skull_king
+run_name: cfr_v7_splitnet

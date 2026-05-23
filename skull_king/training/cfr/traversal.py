@@ -29,7 +29,14 @@ from skull_king.env.skull_king_env import (
     _CANONICAL_DECK,
 )
 from skull_king.game_state import GamePhase
-from skull_king.training.cfr.networks import AdvantageNet, regret_match
+from skull_king.training.cfr.networks import (
+    AdvantageNet,
+    BiddingAdvNet,
+    BID_ACTION_SIZE,
+    PlayingAdvNet,
+    PLAY_ACTION_SIZE,
+    regret_match,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -400,3 +407,293 @@ def traverse(
             adv_targets[k, a_taken] = (utility - baseline) / prob_taken
 
     return adv_obs, adv_masks, adv_targets, adv_actions, strat_obs, strat_masks, strat_strategies
+
+
+# ---------------------------------------------------------------------------
+# Split-network traversal (separate bidding and playing networks)
+# ---------------------------------------------------------------------------
+
+# Global vars for split workers (analogous to _ADV_NET for the unified worker).
+_BID_ADV_NET: Optional[BiddingAdvNet] = None
+_PLAY_ADV_NET: Optional[PlayingAdvNet] = None
+
+
+def _global_to_play_mask(global_mask: np.ndarray) -> np.ndarray:
+    """Extract 71-action play mask from 82-action global mask."""
+    play_mask = np.empty(PLAY_ACTION_SIZE, dtype=bool)
+    play_mask[:69] = global_mask[N_BID_ACTIONS:N_BID_ACTIONS + 69]
+    play_mask[69] = global_mask[TIGRESS_AS_ESCAPE_ACTION]
+    play_mask[70] = global_mask[TIGRESS_AS_PIRATE_ACTION]
+    return play_mask
+
+
+def _play_local_to_global(local: int) -> int:
+    """Convert 71-action local play index to 82-action global index."""
+    if local < 69:
+        return local + N_BID_ACTIONS
+    if local == 69:
+        return TIGRESS_AS_ESCAPE_ACTION
+    return TIGRESS_AS_PIRATE_ACTION
+
+
+def _play_global_to_local(global_action: int) -> int:
+    """Convert 82-action global play index to 71-action local index."""
+    if global_action == TIGRESS_AS_ESCAPE_ACTION:
+        return 69
+    if global_action == TIGRESS_AS_PIRATE_ACTION:
+        return 70
+    return global_action - N_BID_ACTIONS
+
+
+def worker_init_split(
+    bid_adv_weights: dict,
+    play_adv_weights: dict,
+    n_players: int,
+    shared_w=None,
+    shared_v=None,
+    heuristic_frac: float = 0.0,
+) -> None:
+    """Worker initialiser for split-network training.
+
+    Builds BiddingAdvNet and PlayingAdvNet from their respective state dicts.
+    Weight broadcast uses shared_w["bid_weights"] and shared_w["play_weights"].
+    """
+    import torch
+    torch.set_num_threads(1)
+    global _BID_ADV_NET, _PLAY_ADV_NET, _UTIL_ENV
+    global _SHARED_W, _SHARED_V, _LOCAL_V
+    global _HEURISTIC, _HEURISTIC_FRAC, _C_ENGINE
+
+    _HEURISTIC_FRAC = heuristic_frac
+    _HEURISTIC = None
+    if heuristic_frac > 0.0:
+        from skull_king.agents import HeuristicAgent as _HA
+        _HEURISTIC = _HA()
+
+    bid_hidden = _hidden_from_weights(bid_adv_weights)
+    play_hidden = _hidden_from_weights(play_adv_weights)
+    _BID_ADV_NET = BiddingAdvNet(hidden=bid_hidden)
+    _BID_ADV_NET.load_state_dict(bid_adv_weights)
+    _BID_ADV_NET.eval()
+    _PLAY_ADV_NET = PlayingAdvNet(hidden=play_hidden)
+    _PLAY_ADV_NET.load_state_dict(play_adv_weights)
+    _PLAY_ADV_NET.eval()
+
+    _UTIL_ENV = SkullKingEnv(n_players=n_players)
+    _SHARED_W = shared_w
+    _SHARED_V = shared_v
+    _LOCAL_V = 0
+    _C_ENGINE = None   # C engine does not support split nets
+
+
+def _maybe_reload_weights_split() -> None:
+    """Pull bid+play adv weights from shared memory if stale."""
+    global _LOCAL_V
+    if _SHARED_V is None or _SHARED_W is None:
+        return
+    v = _SHARED_V.value
+    if v > _LOCAL_V:
+        w = _SHARED_W["weights"]
+        if _BID_ADV_NET is not None:
+            _BID_ADV_NET.load_state_dict(w["bid_weights"])
+        if _PLAY_ADV_NET is not None:
+            _PLAY_ADV_NET.load_state_dict(w["play_weights"])
+        _LOCAL_V = v
+
+
+def worker_task_split(args: tuple) -> tuple:
+    """Split-network variant of worker_task. Returns 14 arrays."""
+    _maybe_reload_weights_split()
+    traverser, seed, n_players = args
+    return traverse_split(traverser, _BID_ADV_NET, _PLAY_ADV_NET, _UTIL_ENV, seed, n_players)
+
+
+def traverse_split(
+    traverser: int,
+    bid_adv_net: BiddingAdvNet,
+    play_adv_net: PlayingAdvNet,
+    util_env: SkullKingEnv,
+    seed: int,
+    n_players: int = 4,
+) -> tuple:
+    """Outcome-sampling CFR traversal with separate bidding and playing networks.
+
+    Returns 14 stacked ndarrays grouped as:
+        bid_adv_obs, bid_adv_masks, bid_adv_targets, bid_adv_actions,
+        bid_strat_obs, bid_strat_masks, bid_strat_strategies,
+        play_adv_obs, play_adv_masks, play_adv_targets, play_adv_actions,
+        play_strat_obs, play_strat_masks, play_strat_strategies
+
+    Bid samples use local action indices 0..10 (bid value == action index).
+    Play samples use local action indices 0..70 (0..68 = card slots,
+    69 = Tigress-ESCAPE, 70 = Tigress-PIRATE).
+    """
+    rng = np.random.default_rng(int(seed))
+    engine = GameEngine(n_players=n_players, seed=int(seed))
+    engine.start()
+
+    # Strategy samples (all players)
+    bid_s_obs: list[np.ndarray] = []
+    bid_s_masks: list[np.ndarray] = []
+    bid_s_strats: list[np.ndarray] = []
+    play_s_obs: list[np.ndarray] = []
+    play_s_masks: list[np.ndarray] = []
+    play_s_strats: list[np.ndarray] = []
+
+    # Traverser advantage tracking
+    bid_t_idx: list[int] = []
+    bid_t_act: list[int] = []
+    bid_t_adv: list[np.ndarray] = []
+    play_t_idx: list[int] = []
+    play_t_act: list[int] = []
+    play_t_adv: list[np.ndarray] = []
+
+    while engine._phase != GamePhase.GAME_OVER:
+        p = engine._current_player_index()
+        obs = util_env._build_observation_from_engine(engine, p)
+        global_mask = util_env._action_masks_from_engine(engine, p)
+
+        if engine._phase == GamePhase.BIDDING:
+            bid_mask = global_mask[:BID_ACTION_SIZE]
+            adv_est = bid_adv_net.predict(obs, bid_mask)
+            strategy = regret_match(adv_est, bid_mask)
+
+            bid_s_obs.append(obs)
+            bid_s_masks.append(bid_mask)
+            bid_s_strats.append(strategy)
+
+            legal_idx = np.where(bid_mask)[0]
+            probs = strategy[legal_idx]
+            probs = probs / probs.sum()
+            cum = probs.cumsum()
+            r = float(rng.random())
+            i_legal = int(np.searchsorted(cum, r, side="right"))
+            if i_legal >= len(legal_idx):
+                i_legal = len(legal_idx) - 1
+            action_local = int(legal_idx[i_legal])  # bid value == local index
+
+            if p == traverser:
+                bid_t_idx.append(len(bid_s_obs) - 1)
+                bid_t_act.append(action_local)
+                bid_t_adv.append(adv_est)
+            elif _HEURISTIC is not None and float(rng.random()) < _HEURISTIC_FRAC:
+                try:
+                    action_local = _heuristic_action(engine, p)  # returns bid (=local)
+                except Exception:
+                    pass
+
+            engine.place_bid_no_state(p, action_local)
+
+        else:  # PLAYING
+            play_mask = _global_to_play_mask(global_mask)
+            adv_est = play_adv_net.predict(obs, play_mask)
+            strategy = regret_match(adv_est, play_mask)
+
+            play_s_obs.append(obs)
+            play_s_masks.append(play_mask)
+            play_s_strats.append(strategy)
+
+            legal_idx = np.where(play_mask)[0]
+            probs = strategy[legal_idx]
+            probs = probs / probs.sum()
+            cum = probs.cumsum()
+            r = float(rng.random())
+            i_legal = int(np.searchsorted(cum, r, side="right"))
+            if i_legal >= len(legal_idx):
+                i_legal = len(legal_idx) - 1
+            action_local = int(legal_idx[i_legal])
+            action_global = _play_local_to_global(action_local)
+
+            if p == traverser:
+                play_t_idx.append(len(play_s_obs) - 1)
+                play_t_act.append(action_local)
+                play_t_adv.append(adv_est)
+            elif _HEURISTIC is not None and float(rng.random()) < _HEURISTIC_FRAC:
+                try:
+                    heur_global = _heuristic_action(engine, p)
+                    if heur_global >= N_BID_ACTIONS:
+                        action_local = _play_global_to_local(heur_global)
+                        action_global = heur_global
+                except Exception:
+                    pass
+
+            card, mode, _ = _decode_action(action_global)
+            engine.play_card_no_state(p, card, mode)
+
+    utility = _compute_utility_from_engine(engine, traverser)
+
+    # ── Build bid advantage targets ────────────────────────────────────────
+    obs_dim = util_env.observation_space.shape[0]
+    n_bid_adv = len(bid_t_idx)
+    if n_bid_adv == 0:
+        bid_adv_obs = np.empty((0, obs_dim), dtype=np.float32)
+        bid_adv_masks = np.empty((0, BID_ACTION_SIZE), dtype=bool)
+        bid_adv_targets = np.empty((0, BID_ACTION_SIZE), dtype=np.float32)
+        bid_adv_actions = np.empty((0,), dtype=np.int64)
+    else:
+        bid_adv_obs = np.stack([bid_s_obs[i] for i in bid_t_idx])
+        bid_adv_masks = np.stack([bid_s_masks[i] for i in bid_t_idx])
+        bid_adv_targets = np.zeros((n_bid_adv, BID_ACTION_SIZE), dtype=np.float32)
+        bid_adv_actions = np.array(bid_t_act, dtype=np.int64)
+        for k in range(n_bid_adv):
+            adv_est = bid_t_adv[k]
+            strat = bid_s_strats[bid_t_idx[k]]
+            mask_k = bid_s_masks[bid_t_idx[k]]
+            legal = np.where(mask_k)[0]
+            baseline = float(np.dot(strat[legal], adv_est[legal]))
+            a = bid_t_act[k]
+            prob = max(float(strat[a]), 0.05)
+            bid_adv_targets[k, legal] = adv_est[legal] - baseline
+            bid_adv_targets[k, a] = (utility - baseline) / prob
+
+    # ── Build bid strategy arrays ──────────────────────────────────────────
+    n_bid_s = len(bid_s_obs)
+    if n_bid_s:
+        bid_strat_obs = np.stack(bid_s_obs)
+        bid_strat_masks = np.stack(bid_s_masks)
+        bid_strat_strats = np.stack(bid_s_strats)
+    else:
+        bid_strat_obs = np.empty((0, obs_dim), dtype=np.float32)
+        bid_strat_masks = np.empty((0, BID_ACTION_SIZE), dtype=bool)
+        bid_strat_strats = np.empty((0, BID_ACTION_SIZE), dtype=np.float32)
+
+    # ── Build play advantage targets ───────────────────────────────────────
+    n_play_adv = len(play_t_idx)
+    if n_play_adv == 0:
+        play_adv_obs = np.empty((0, obs_dim), dtype=np.float32)
+        play_adv_masks = np.empty((0, PLAY_ACTION_SIZE), dtype=bool)
+        play_adv_targets = np.empty((0, PLAY_ACTION_SIZE), dtype=np.float32)
+        play_adv_actions = np.empty((0,), dtype=np.int64)
+    else:
+        play_adv_obs = np.stack([play_s_obs[i] for i in play_t_idx])
+        play_adv_masks = np.stack([play_s_masks[i] for i in play_t_idx])
+        play_adv_targets = np.zeros((n_play_adv, PLAY_ACTION_SIZE), dtype=np.float32)
+        play_adv_actions = np.array(play_t_act, dtype=np.int64)
+        for k in range(n_play_adv):
+            adv_est = play_t_adv[k]
+            strat = play_s_strats[play_t_idx[k]]
+            mask_k = play_s_masks[play_t_idx[k]]
+            legal = np.where(mask_k)[0]
+            baseline = float(np.dot(strat[legal], adv_est[legal]))
+            a = play_t_act[k]
+            prob = max(float(strat[a]), 0.05)
+            play_adv_targets[k, legal] = adv_est[legal] - baseline
+            play_adv_targets[k, a] = (utility - baseline) / prob
+
+    # ── Build play strategy arrays ─────────────────────────────────────────
+    n_play_s = len(play_s_obs)
+    if n_play_s:
+        play_strat_obs = np.stack(play_s_obs)
+        play_strat_masks = np.stack(play_s_masks)
+        play_strat_strats = np.stack(play_s_strats)
+    else:
+        play_strat_obs = np.empty((0, obs_dim), dtype=np.float32)
+        play_strat_masks = np.empty((0, PLAY_ACTION_SIZE), dtype=bool)
+        play_strat_strats = np.empty((0, PLAY_ACTION_SIZE), dtype=np.float32)
+
+    return (
+        bid_adv_obs, bid_adv_masks, bid_adv_targets, bid_adv_actions,
+        bid_strat_obs, bid_strat_masks, bid_strat_strats,
+        play_adv_obs, play_adv_masks, play_adv_targets, play_adv_actions,
+        play_strat_obs, play_strat_masks, play_strat_strats,
+    )

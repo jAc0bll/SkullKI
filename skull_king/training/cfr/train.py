@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 import yaml
 
-from skull_king.training.cfr.trainer import DeepCFRTrainer
+from skull_king.training.cfr.trainer import DeepCFRTrainer, SplitDeepCFRTrainer
 
 
 @dataclass
@@ -49,6 +49,12 @@ class CFRConfig:
     # Opponent pool: fraction of non-traverser decisions played by HeuristicAgent.
     # 0.0 = pure self-play (old behaviour); 0.4 = 40% heuristic opponents.
     heuristic_frac: float = 0.0
+
+    # Split-network mode: use separate bidding and playing networks.
+    # When True, SplitDeepCFRTrainer is used; bid_hidden/play_hidden override net_hidden.
+    split_nets: bool = False
+    bid_hidden: list = field(default_factory=lambda: [256, 256])
+    play_hidden: list = field(default_factory=lambda: [512, 512])
 
     # Logging / output
     eval_every_n_iters: int = 50
@@ -88,7 +94,10 @@ def main() -> None:
     parser.add_argument("--config", default="cfr_config.yaml")
     args = parser.parse_args()
     cfg = load_config(args.config)
-    trainer = DeepCFRTrainer(cfg)
+    if cfg.split_nets:
+        trainer = SplitDeepCFRTrainer(cfg)
+    else:
+        trainer = DeepCFRTrainer(cfg)
     trainer.train()
 
 

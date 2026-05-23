@@ -1,4 +1,4 @@
-"""Evaluate all cfr_v3_pc checkpoints + final model."""
+"""Evaluate all cfr_v6_heuristic checkpoints + reference models."""
 from __future__ import annotations
 
 import os
@@ -19,20 +19,14 @@ MODEL_DIR = "models/skull_king"
 BEWERTUNG_DIR = "bewertung"
 
 CHECKPOINTS = [
-    (f"cfr_v3_pc_iter{i}", os.path.join(MODEL_DIR, f"cfr_v3_pc_iter{i}_strat.pt"))
-    for i in range(100, 1001, 100)
-]
-CHECKPOINTS += [
-    ("cfr_final (v3_pc)", os.path.join(MODEL_DIR, "cfr_final_strat.pt")),
+    (f"cfr_v6_iter{i}", os.path.join(MODEL_DIR, f"cfr_v6_heuristic_iter{i}_strat.pt"))
+    for i in range(250, 2001, 250)
 ]
 
-# Also include v2 server for comparison
+# Reference: v2_server (best historical model) and v3_pc for comparison
 COMPARE = [
-    (f"cfr_v2_server_iter{i}", os.path.join(BEWERTUNG_DIR, f"cfr_v2_server_iter{i}_strat.pt"))
-    for i in range(100, 901, 100)
-]
-COMPARE += [
-    ("cfr_final (bewertung)", os.path.join(BEWERTUNG_DIR, "cfr_final_strat.pt")),
+    ("cfr_final (v2_server)", os.path.join(BEWERTUNG_DIR, "cfr_final_strat.pt")),
+    (f"cfr_v3_pc_iter1000", os.path.join(MODEL_DIR, "cfr_v3_pc_iter1000_strat.pt")),
 ]
 
 
@@ -70,9 +64,9 @@ def print_table(rows: list[tuple[str, dict]]) -> None:
 
 
 print("\n" + "=" * 80)
-print("  cfr_v3_pc  (1000 iter, PC, 8 workers, spawn)")
+print("  cfr_v6_heuristic  (2000 iter, all 5 fixes)")
 print("=" * 80)
-rows_v3: list[tuple[str, dict]] = []
+rows_v6: list[tuple[str, dict]] = []
 for name, path in CHECKPOINTS:
     agent = load_agent(path, name)
     if agent is None:
@@ -80,12 +74,12 @@ for name, path in CHECKPOINTS:
     m = eval_agent(agent)
     print(f"  {name}: WR_rand={m['wr_random']:.1%}  WR_heur={m['wr_heuristic']:.1%}"
           f"  avg_rand={m['avg_random']:+.1f}  avg_heur={m['avg_heuristic']:+.1f}")
-    rows_v3.append((name, m))
+    rows_v6.append((name, m))
 
 print("\n" + "=" * 80)
-print("  cfr_v2_server  (900 iter, server, comparison)")
+print("  Reference models (v2_server, v3_pc)")
 print("=" * 80)
-rows_v2: list[tuple[str, dict]] = []
+rows_ref: list[tuple[str, dict]] = []
 for name, path in COMPARE:
     agent = load_agent(path, name)
     if agent is None:
@@ -93,15 +87,15 @@ for name, path in COMPARE:
     m = eval_agent(agent)
     print(f"  {name}: WR_rand={m['wr_random']:.1%}  WR_heur={m['wr_heuristic']:.1%}"
           f"  avg_rand={m['avg_random']:+.1f}  avg_heur={m['avg_heuristic']:+.1f}")
-    rows_v2.append((name, m))
+    rows_ref.append((name, m))
 
 print("\n\n" + "=" * 80)
-print("  SUMMARY TABLE — cfr_v3_pc")
+print("  SUMMARY TABLE — cfr_v6_heuristic")
 print("=" * 80)
-print_table(rows_v3)
+print_table(rows_v6)
 
-if rows_v2:
+if rows_ref:
     print("\n" + "=" * 80)
-    print("  SUMMARY TABLE — cfr_v2_server (comparison)")
+    print("  SUMMARY TABLE — Reference models")
     print("=" * 80)
-    print_table(rows_v2)
+    print_table(rows_ref)

@@ -33,11 +33,17 @@ class AdvantageBuffer:
     training uses MSE loss restricted to that index.
     """
 
-    def __init__(self, capacity: int, seed: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        capacity: int,
+        obs_size: int = OBS_SIZE,
+        action_size: int = ACTION_SPACE_SIZE,
+        seed: Optional[int] = None,
+    ) -> None:
         self.capacity = capacity
-        self._obs = np.empty((capacity, OBS_SIZE), dtype=np.float32)
-        self._masks = np.empty((capacity, ACTION_SPACE_SIZE), dtype=bool)
-        self._targets = np.empty((capacity, ACTION_SPACE_SIZE), dtype=np.float32)
+        self._obs = np.empty((capacity, obs_size), dtype=np.float32)
+        self._masks = np.empty((capacity, action_size), dtype=bool)
+        self._targets = np.empty((capacity, action_size), dtype=np.float32)
         self._actions = np.empty(capacity, dtype=np.int64)
         self._pos = 0
         self._size = 0
@@ -124,11 +130,17 @@ class StrategyBuffer:
     at each visited information set — this is the Nash approximation.
     """
 
-    def __init__(self, capacity: int, seed: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        capacity: int,
+        obs_size: int = OBS_SIZE,
+        action_size: int = ACTION_SPACE_SIZE,
+        seed: Optional[int] = None,
+    ) -> None:
         self.capacity = capacity
-        self._obs = np.empty((capacity, OBS_SIZE), dtype=np.float32)
-        self._masks = np.empty((capacity, ACTION_SPACE_SIZE), dtype=bool)
-        self._strategies = np.empty((capacity, ACTION_SPACE_SIZE), dtype=np.float32)
+        self._obs = np.empty((capacity, obs_size), dtype=np.float32)
+        self._masks = np.empty((capacity, action_size), dtype=bool)
+        self._strategies = np.empty((capacity, action_size), dtype=np.float32)
         self._pos = 0
         self._size = 0
         self._rng = np.random.default_rng(seed)

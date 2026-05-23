@@ -24,10 +24,25 @@ from rich.progress import (
 )
 
 from skull_king.agents import HeuristicAgent, RandomAgent
+from skull_king.env.skull_king_env import OBS_SIZE
 from skull_king.tournament.runner import TournamentRunner
 from skull_king.training.cfr.buffers import AdvantageBuffer, StrategyBuffer
-from skull_king.training.cfr.networks import AdvantageNet, StrategyNet
-from skull_king.training.cfr.traversal import worker_init, worker_task
+from skull_king.training.cfr.networks import (
+    AdvantageNet,
+    BID_ACTION_SIZE,
+    BiddingAdvNet,
+    BiddingStratNet,
+    PLAY_ACTION_SIZE,
+    PlayingAdvNet,
+    PlayingStratNet,
+    StrategyNet,
+)
+from skull_king.training.cfr.traversal import (
+    worker_init,
+    worker_init_split,
+    worker_task,
+    worker_task_split,
+)
 
 if TYPE_CHECKING:
     from skull_king.training.cfr.train import CFRConfig
@@ -408,3 +423,317 @@ class DeepCFRTrainer:
     def _save(self, base_path: str) -> None:
         torch.save(self.adv_net.state_dict(), f"{base_path}_adv.pt")
         torch.save(self.strat_net.state_dict(), f"{base_path}_strat.pt")
+
+
+# ---------------------------------------------------------------------------
+# Split-network trainer
+# ---------------------------------------------------------------------------
+
+
+class SplitDeepCFRTrainer:
+    """Deep CFR trainer with separate bidding and playing networks.
+
+    Uses four networks:
+      bid_adv_net / bid_strat_net  — for bidding decisions (output size 11)
+      play_adv_net / play_strat_net — for playing decisions (output size 71)
+
+    Each network has its own advantage/strategy buffer so gradients from
+    bidding (hand-strength estimation) and playing (card selection) never
+    interfere with each other.
+    """
+
+    def __init__(self, cfg: "CFRConfig") -> None:
+        self.cfg = cfg
+        self.device = _pick_device()
+
+        bid_hidden = tuple(getattr(cfg, "bid_hidden", [256, 256]))
+        play_hidden = tuple(getattr(cfg, "play_hidden", [512, 512]))
+
+        self.bid_adv_net = BiddingAdvNet(hidden=bid_hidden).to(self.device)
+        self.bid_strat_net = BiddingStratNet(hidden=bid_hidden).to(self.device)
+        self.play_adv_net = PlayingAdvNet(hidden=play_hidden).to(self.device)
+        self.play_strat_net = PlayingStratNet(hidden=play_hidden).to(self.device)
+        for net in (self.bid_adv_net, self.bid_strat_net,
+                    self.play_adv_net, self.play_strat_net):
+            net.eval()
+
+        self.bid_adv_opt = torch.optim.Adam(self.bid_adv_net.parameters(), lr=cfg.adv_lr)
+        self.bid_strat_opt = torch.optim.Adam(self.bid_strat_net.parameters(), lr=cfg.strat_lr)
+        self.play_adv_opt = torch.optim.Adam(self.play_adv_net.parameters(), lr=cfg.adv_lr)
+        self.play_strat_opt = torch.optim.Adam(self.play_strat_net.parameters(), lr=cfg.strat_lr)
+
+        cap_adv = cfg.adv_buffer_capacity
+        cap_str = cfg.strat_buffer_capacity
+        seed = cfg.env_seed
+        self.bid_adv_buf = AdvantageBuffer(cap_adv, obs_size=OBS_SIZE,
+                                           action_size=BID_ACTION_SIZE, seed=seed + 1)
+        self.bid_strat_buf = StrategyBuffer(cap_str, obs_size=OBS_SIZE,
+                                            action_size=BID_ACTION_SIZE, seed=seed + 2)
+        self.play_adv_buf = AdvantageBuffer(cap_adv, obs_size=OBS_SIZE,
+                                            action_size=PLAY_ACTION_SIZE, seed=seed + 3)
+        self.play_strat_buf = StrategyBuffer(cap_str, obs_size=OBS_SIZE,
+                                             action_size=PLAY_ACTION_SIZE, seed=seed + 4)
+
+        self._rng = np.random.default_rng(seed)
+        os.makedirs(cfg.model_dir, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
+
+    def train(self) -> None:
+        cfg = self.cfg
+        total_traversals = cfg.traversals_per_player * cfg.n_players
+        _console.print(f"\n{'='*66}")
+        _console.print(f"  Deep CFR (split nets)  -  {cfg.run_name}")
+        _console.print(
+            f"  {cfg.n_cfr_iterations} iters  x  {total_traversals} traversals/iter"
+            f"  x  workers={cfg.num_workers}"
+        )
+        _console.print(f"  device: {self.device}")
+        _console.print(f"{'='*66}\n")
+
+        self._is_windows = sys.platform == "win32"
+        self._ctx = multiprocessing.get_context("spawn" if self._is_windows else "fork")
+
+        if cfg.num_workers > 1:
+            torch.set_num_threads(min(8, torch.get_num_threads()))
+
+        if sys.platform != "win32":
+            try:
+                soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+                target = max(soft, 65536)
+                resource.setrlimit(resource.RLIMIT_NOFILE, (target, max(hard, target)))
+            except ValueError:
+                pass
+
+        persistent_pool = None
+        self._manager = None
+        self._shared_w = None
+        self._shared_v = None
+        if cfg.num_workers > 1:
+            bid_w = {k: v.cpu() for k, v in self.bid_adv_net.state_dict().items()}
+            play_w = {k: v.cpu() for k, v in self.play_adv_net.state_dict().items()}
+            self._manager = self._ctx.Manager()
+            self._shared_w = self._manager.dict()
+            self._shared_w["weights"] = {"bid_weights": bid_w, "play_weights": play_w}
+            self._shared_v = self._ctx.Value("Q", 0)
+            persistent_pool = self._ctx.Pool(
+                processes=cfg.num_workers,
+                initializer=worker_init_split,
+                initargs=(bid_w, play_w, cfg.n_players,
+                          self._shared_w, self._shared_v, cfg.heuristic_frac),
+            )
+
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TextColumn("[cyan]{task.fields[metrics]}"),
+                TimeRemainingColumn(),
+                console=_console,
+                refresh_per_second=4,
+            ) as progress:
+                task = progress.add_task(
+                    "CFR Split Training",
+                    total=cfg.n_cfr_iterations,
+                    metrics="",
+                )
+
+                for t in range(1, cfg.n_cfr_iterations + 1):
+                    t0 = time.time()
+
+                    self._reset_adv()
+                    self._collect(t, persistent_pool)
+                    bid_adv_loss = self._train_net(
+                        self.bid_adv_net, self.bid_adv_opt, self.bid_adv_buf,
+                        cfg.adv_batch_size, cfg.adv_train_steps, mode="adv",
+                    )
+                    bid_strat_loss = self._train_net(
+                        self.bid_strat_net, self.bid_strat_opt, self.bid_strat_buf,
+                        cfg.strat_batch_size, cfg.strat_train_steps, mode="strat",
+                    )
+                    play_adv_loss = self._train_net(
+                        self.play_adv_net, self.play_adv_opt, self.play_adv_buf,
+                        cfg.adv_batch_size, cfg.adv_train_steps, mode="adv",
+                    )
+                    play_strat_loss = self._train_net(
+                        self.play_strat_net, self.play_strat_opt, self.play_strat_buf,
+                        cfg.strat_batch_size, cfg.strat_train_steps, mode="strat",
+                    )
+
+                    elapsed = time.time() - t0
+                    progress.update(
+                        task,
+                        advance=1,
+                        metrics=(
+                            f"b_adv={bid_adv_loss:.3f} b_str={bid_strat_loss:.3f}"
+                            f" p_adv={play_adv_loss:.3f} p_str={play_strat_loss:.3f}"
+                            f"  {elapsed:.1f}s/it"
+                        ),
+                    )
+
+                    if t % cfg.eval_every_n_iters == 0:
+                        progress.print("")
+                        self._evaluate(t, progress)
+
+                    if t % cfg.checkpoint_every_n_iters == 0:
+                        path = os.path.join(cfg.model_dir, f"{cfg.run_name}_iter{t}")
+                        self._save(path)
+                        progress.print(f"  [Checkpoint] -> {path}_{{bid,play}}_{{adv,strat}}.pt")
+        finally:
+            if persistent_pool is not None:
+                persistent_pool.close()
+                persistent_pool.join()
+            if self._manager is not None:
+                self._manager.shutdown()
+
+        final = os.path.join(cfg.model_dir, "cfr_split_final")
+        self._save(final)
+        _console.print(f"\nTraining complete. Saved -> {final}_{{bid,play}}_{{adv,strat}}.pt")
+
+    def _reset_adv(self) -> None:
+        self.bid_adv_opt = torch.optim.Adam(self.bid_adv_net.parameters(), lr=self.cfg.adv_lr)
+        self.play_adv_opt = torch.optim.Adam(self.play_adv_net.parameters(), lr=self.cfg.adv_lr)
+
+    def _collect(self, iteration: int, persistent_pool) -> None:
+        cfg = self.cfg
+        bid_w = {k: v.cpu() for k, v in self.bid_adv_net.state_dict().items()}
+        play_w = {k: v.cpu() for k, v in self.play_adv_net.state_dict().items()}
+
+        tasks = [
+            (i % cfg.n_players, int(self._rng.integers(0, 2**31)), cfg.n_players)
+            for i in range(cfg.traversals_per_player * cfg.n_players)
+        ]
+
+        if self._shared_w is not None and self._shared_v is not None:
+            self._shared_w["weights"] = {"bid_weights": bid_w, "play_weights": play_w}
+            with self._shared_v.get_lock():
+                self._shared_v.value += 1
+
+        if persistent_pool is None:
+            from skull_king.training.cfr.traversal import (
+                BiddingAdvNet as _BAN, PlayingAdvNet as _PAN,
+                worker_init_split, traverse_split,
+            )
+            worker_init_split(bid_w, play_w, cfg.n_players,
+                              heuristic_frac=cfg.heuristic_frac)
+            results = (worker_task_split(t) for t in tasks)
+        else:
+            chunksize = max(4, len(tasks) // (cfg.num_workers * 2))
+            results = persistent_pool.imap_unordered(worker_task_split, tasks,
+                                                     chunksize=chunksize)
+
+        ba_obs, ba_masks, ba_targets, ba_acts = [], [], [], []
+        bs_obs, bs_masks, bs_strats = [], [], []
+        pa_obs, pa_masks, pa_targets, pa_acts = [], [], [], []
+        ps_obs, ps_masks, ps_strats = [], [], []
+
+        for res in results:
+            (b_ao, b_am, b_at, b_aa,
+             b_so, b_sm, b_ss,
+             p_ao, p_am, p_at, p_aa,
+             p_so, p_sm, p_ss) = res
+            if b_ao.shape[0]:
+                ba_obs.append(b_ao); ba_masks.append(b_am)
+                ba_targets.append(b_at); ba_acts.append(b_aa)
+            if b_so.shape[0]:
+                bs_obs.append(b_so); bs_masks.append(b_sm); bs_strats.append(b_ss)
+            if p_ao.shape[0]:
+                pa_obs.append(p_ao); pa_masks.append(p_am)
+                pa_targets.append(p_at); pa_acts.append(p_aa)
+            if p_so.shape[0]:
+                ps_obs.append(p_so); ps_masks.append(p_sm); ps_strats.append(p_ss)
+
+        if ba_obs:
+            self.bid_adv_buf.add_batch_vec(
+                np.concatenate(ba_obs), np.concatenate(ba_masks),
+                np.concatenate(ba_targets), np.concatenate(ba_acts),
+            )
+        if bs_obs:
+            self.bid_strat_buf.add_batch_vec(
+                np.concatenate(bs_obs), np.concatenate(bs_masks),
+                np.concatenate(bs_strats),
+            )
+        if pa_obs:
+            self.play_adv_buf.add_batch_vec(
+                np.concatenate(pa_obs), np.concatenate(pa_masks),
+                np.concatenate(pa_targets), np.concatenate(pa_acts),
+            )
+        if ps_obs:
+            self.play_strat_buf.add_batch_vec(
+                np.concatenate(ps_obs), np.concatenate(ps_masks),
+                np.concatenate(ps_strats),
+            )
+
+    def _train_net(
+        self,
+        net: nn.Module,
+        opt: torch.optim.Optimizer,
+        buf,
+        batch_size: int,
+        max_steps: int,
+        mode: str,
+    ) -> float:
+        if len(buf) < batch_size:
+            return 0.0
+        effective_steps = min(max_steps, max(1, len(buf) // (batch_size // 4)))
+        net.train()
+        total = 0.0
+        for _ in range(effective_steps):
+            if mode == "adv":
+                obs, masks, targets, _ = buf.sample(batch_size)
+                obs_t = torch.from_numpy(obs).float().to(self.device)
+                tgt_t = torch.from_numpy(targets).float().to(self.device)
+                mask_f = torch.from_numpy(masks).float().to(self.device)
+                pred = net(obs_t)
+                diff = (pred - tgt_t) * mask_f
+                loss = (diff * diff).sum() / mask_f.sum().clamp(min=1)
+            else:
+                obs, masks, strats = buf.sample(batch_size)
+                obs_t = torch.from_numpy(obs).float().to(self.device)
+                mask_t = torch.from_numpy(masks).to(self.device)
+                strat_t = torch.from_numpy(strats).float().to(self.device)
+                logits = net(obs_t).masked_fill(~mask_t, float("-inf"))
+                log_probs = torch.log_softmax(logits, dim=-1)
+                loss = -(strat_t * log_probs).nan_to_num(0.0).sum(dim=-1).mean()
+
+            opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+            opt.step()
+            total += loss.item()
+        net.eval()
+        return total / effective_steps
+
+    def _evaluate(self, t: int, progress=None) -> None:
+        from skull_king.training.cfr.agent import SplitCFRAgent
+        n = self.cfg.n_players
+        agent = SplitCFRAgent(
+            self.bid_strat_net, self.play_strat_net, n_players=n, name="CFR-split"
+        )
+        runner = TournamentRunner(seed=999)
+        r_r = runner.run([agent] + [RandomAgent(i) for i in range(n - 1)], n_games=100)
+        r_h = runner.run([agent] + [HeuristicAgent() for _ in range(n - 1)], n_games=100)
+        wr_r = r_r.win_rates().get("CFR-split", 0.0)
+        wr_h = r_h.win_rates().get("CFR-split", 0.0)
+        avg_r = r_r.avg_scores().get("CFR-split", 0.0)
+        avg_h = r_h.avg_scores().get("CFR-split", 0.0)
+        msg = (
+            f"  [Eval iter={t}]"
+            f"  vs_random={wr_r:.1%} ({avg_r:+.0f})"
+            f"  vs_heuristic={wr_h:.1%} ({avg_h:+.0f})"
+            f"  bid_buf={len(self.bid_adv_buf):,}  play_buf={len(self.play_adv_buf):,}"
+        )
+        if progress is not None:
+            progress.print(msg)
+        else:
+            _console.print(msg)
+
+    def _save(self, base_path: str) -> None:
+        torch.save(self.bid_adv_net.state_dict(), f"{base_path}_bid_adv.pt")
+        torch.save(self.bid_strat_net.state_dict(), f"{base_path}_bid_strat.pt")
+        torch.save(self.play_adv_net.state_dict(), f"{base_path}_play_adv.pt")
+        torch.save(self.play_strat_net.state_dict(), f"{base_path}_play_strat.pt")
