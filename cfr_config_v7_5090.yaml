@@ -1,30 +1,20 @@
 # Deep CFR — v7 split-network, RTX 5090 RunPod config (~8h)
 # Run:  python -m skull_king.training.cfr.train --config cfr_config_v7_5090.yaml
 #
-# Timing estimate (Linux fork, Python traversal, no C engine for split nets):
-#   Collection: 2000 traversals / 24 workers x ~28ms/traversal  =  ~2.3s
-#   IPC result: ~110 MB / 400 MB/s pipes                         =  ~0.3s
-#   Net training: 4 nets x 800 steps x batch 2048 on 5090        =  ~0.5s
-#   Overhead (broadcast, scheduling):                             =  ~0.5s
-#   Total:                                                        =  ~3.5s/iter
-#   Budget: 8h = 28800s / 3.5s                                   =  ~8200 iters
-#   Conservative target:                                          =  3000 iters
-#
-# Memory budget (split nets, 4 buffers):
-#   bid_adv_buf  (1M x ~1KB)   =  ~1 GB
-#   bid_strat_buf (1M x ~1KB)  =  ~1 GB
-#   play_adv_buf  (3M x ~1.3KB) =  ~3.9 GB
-#   play_strat_buf (5M x ~1.3KB) =  ~6.5 GB
-#   Workers (24 x ~150MB each)  =  ~3.6 GB
-#   Total peak:                 =  ~16 GB  (fits in 96 GB RunPod RAM)
+# Timing estimate (Linux fork, 60 workers, Python traversal):
+#   Collection: 2000 traversals / 60 workers x ~28ms/traversal  =  ~0.9s
+#   Net training: 4 nets x 3000 steps x batch 8192 on 5090      =  ~1.5s
+#   IPC + overhead:                                              =  ~0.6s
+#   Total:                                                       =  ~3s/iter
+#   Budget: 8h = 28800s / 3s                                    =  ~9600 iters
+#   Target:                                                      =  5000 iters
 
 n_players: 4
 env_seed: 42
 
-# 3000 iters x 500 trav/player x 4 players = 6M game simulations
-n_cfr_iterations: 3000
+n_cfr_iterations: 5000
 traversals_per_player: 500
-num_workers: 24       # adjust with: nproc --all  (leave 4-8 cores for OS/IPC)
+num_workers: 60       # set by setup_runpod.sh from nproc
 
 heuristic_frac: 0.4
 
@@ -33,16 +23,16 @@ bid_hidden: [256, 256]
 play_hidden: [512, 512]
 
 adv_lr: 5.0e-4
-adv_batch_size: 2048          # 5090 handles larger batches easily
-adv_train_steps: 800
-adv_buffer_capacity: 3_000_000
+adv_batch_size: 8192          # large batch — 5090 has 34 GB, our nets are tiny
+adv_train_steps: 3000         # more steps per iter to actually use the GPU
+adv_buffer_capacity: 5_000_000
 
 strat_lr: 5.0e-4
-strat_batch_size: 2048
-strat_train_steps: 800
-strat_buffer_capacity: 5_000_000
+strat_batch_size: 8192
+strat_train_steps: 3000
+strat_buffer_capacity: 8_000_000
 
-eval_every_n_iters: 100       # 30 evals over the run
-checkpoint_every_n_iters: 250 # 12 checkpoints — roll back if needed
+eval_every_n_iters: 100
+checkpoint_every_n_iters: 250
 model_dir: models/skull_king
 run_name: cfr_v7_5090
