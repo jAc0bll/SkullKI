@@ -446,24 +446,32 @@ def _play_global_to_local(global_action: int) -> int:
     return global_action - N_BID_ACTIONS
 
 
+_BID_WEIGHT_FILE: Optional[str] = None
+_PLAY_WEIGHT_FILE: Optional[str] = None
+
+
 def worker_init_split(
     bid_adv_weights: dict,
     play_adv_weights: dict,
     n_players: int,
-    shared_w=None,
+    bid_weight_file: Optional[str] = None,
+    play_weight_file: Optional[str] = None,
     shared_v=None,
     heuristic_frac: float = 0.0,
 ) -> None:
     """Worker initialiser for split-network training.
 
     Builds BiddingAdvNet and PlayingAdvNet from their respective state dicts.
-    Weight broadcast uses shared_w["bid_weights"] and shared_w["play_weights"].
+    Weight broadcast: main process writes updated weights to /dev/shm files and
+    bumps shared_v; workers reload via file instead of Manager.dict, which avoids
+    the Manager-process-dies-and-deadlocks-all-workers failure mode in containers.
     """
     import torch
     torch.set_num_threads(1)
     global _BID_ADV_NET, _PLAY_ADV_NET, _UTIL_ENV
     global _SHARED_W, _SHARED_V, _LOCAL_V
     global _HEURISTIC, _HEURISTIC_FRAC, _C_ENGINE
+    global _BID_WEIGHT_FILE, _PLAY_WEIGHT_FILE
 
     _HEURISTIC_FRAC = heuristic_frac
     _HEURISTIC = None
@@ -481,9 +489,11 @@ def worker_init_split(
     _PLAY_ADV_NET.eval()
 
     _UTIL_ENV = SkullKingEnv(n_players=n_players)
-    _SHARED_W = shared_w
+    _SHARED_W = None   # no longer used
     _SHARED_V = shared_v
     _LOCAL_V = 0
+    _BID_WEIGHT_FILE = bid_weight_file
+    _PLAY_WEIGHT_FILE = play_weight_file
     try:
         from skull_king.cfr_engine import SplitCEngine
         if SplitCEngine.available:
@@ -496,19 +506,27 @@ def worker_init_split(
 
 
 def _maybe_reload_weights_split() -> None:
-    """Pull bid+play adv weights from shared memory if stale."""
+    """Reload bid+play adv weights from /dev/shm files if the version counter moved.
+
+    Replaces the old Manager.dict approach: main process writes weight files
+    atomically (write-then-rename) and bumps _SHARED_V; workers read the file
+    directly.  File read from /dev/shm is fast (~5ms for 3MB) and does not go
+    through a Manager process that can crash and deadlock the pool.
+    """
     global _LOCAL_V
-    if _SHARED_V is None or _SHARED_W is None:
+    if _SHARED_V is None or not _BID_WEIGHT_FILE or not _PLAY_WEIGHT_FILE:
         return
     v = _SHARED_V.value
     if v > _LOCAL_V:
-        w = _SHARED_W["weights"]
+        import torch
+        bid_w = torch.load(_BID_WEIGHT_FILE, map_location="cpu", weights_only=True)
+        play_w = torch.load(_PLAY_WEIGHT_FILE, map_location="cpu", weights_only=True)
         if _BID_ADV_NET is not None:
-            _BID_ADV_NET.load_state_dict(w["bid_weights"])
+            _BID_ADV_NET.load_state_dict(bid_w)
         if _PLAY_ADV_NET is not None:
-            _PLAY_ADV_NET.load_state_dict(w["play_weights"])
+            _PLAY_ADV_NET.load_state_dict(play_w)
         if _C_ENGINE is not None:
-            _C_ENGINE.load_weights(w["bid_weights"], w["play_weights"])
+            _C_ENGINE.load_weights(bid_w, play_w)
         _LOCAL_V = v
 
 

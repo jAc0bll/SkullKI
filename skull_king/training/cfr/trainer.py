@@ -536,20 +536,31 @@ class SplitDeepCFRTrainer:
 
         persistent_pool = None
         self._manager = None
-        self._shared_w = None
         self._shared_v = None
+        self._weight_bid_path: str | None = None
+        self._weight_play_path: str | None = None
         if cfg.num_workers > 1:
             bid_w = {k: v.cpu() for k, v in self.bid_adv_net.state_dict().items()}
             play_w = {k: v.cpu() for k, v in self.play_adv_net.state_dict().items()}
-            self._manager = self._ctx.Manager()
-            self._shared_w = self._manager.dict()
-            self._shared_w["weights"] = {"bid_weights": bid_w, "play_weights": play_w}
-            self._shared_v = self._ctx.Value("Q", 0)
+            # File-based weight broadcast: write iter-0 weights to /dev/shm before
+            # pool creation so workers can reload atomically without a Manager process.
+            # Manager.dict() creates an extra process that can crash in containers
+            # (forkserver + PID limits), deadlocking all workers indefinitely.
+            if os.path.isdir("/dev/shm"):
+                _base = f"/dev/shm/cfr_{os.getpid()}"
+                self._weight_bid_path = f"{_base}_bid_weights.pt"
+                self._weight_play_path = f"{_base}_play_weights.pt"
+                torch.save(bid_w, self._weight_bid_path + ".tmp")
+                os.rename(self._weight_bid_path + ".tmp", self._weight_bid_path)
+                torch.save(play_w, self._weight_play_path + ".tmp")
+                os.rename(self._weight_play_path + ".tmp", self._weight_play_path)
+            self._shared_v = self._ctx.Value("Q", 0)  # shared int, no Manager needed
             persistent_pool = self._ctx.Pool(
                 processes=cfg.num_workers,
                 initializer=worker_init_split,
                 initargs=(bid_w, play_w, cfg.n_players,
-                          self._shared_w, self._shared_v, cfg.heuristic_frac),
+                          self._weight_bid_path, self._weight_play_path,
+                          self._shared_v, cfg.heuristic_frac),
             )
 
         try:
@@ -603,8 +614,12 @@ class SplitDeepCFRTrainer:
             if persistent_pool is not None:
                 persistent_pool.close()
                 persistent_pool.join()
-            if self._manager is not None:
-                self._manager.shutdown()
+            for p in (self._weight_bid_path, self._weight_play_path):
+                if p and os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except OSError:
+                        pass
 
         final = os.path.join(cfg.model_dir, "cfr_split_final")
         self._save(final)
@@ -625,8 +640,11 @@ class SplitDeepCFRTrainer:
             for i in range(cfg.traversals_per_player * cfg.n_players)
         ]
 
-        if self._shared_w is not None and self._shared_v is not None:
-            self._shared_w["weights"] = {"bid_weights": bid_w, "play_weights": play_w}
+        if self._shared_v is not None and self._weight_bid_path is not None:
+            torch.save(bid_w, self._weight_bid_path + ".tmp")
+            os.rename(self._weight_bid_path + ".tmp", self._weight_bid_path)
+            torch.save(play_w, self._weight_play_path + ".tmp")
+            os.rename(self._weight_play_path + ".tmp", self._weight_play_path)
             with self._shared_v.get_lock():
                 self._shared_v.value += 1
 
