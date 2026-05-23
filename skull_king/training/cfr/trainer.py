@@ -655,11 +655,27 @@ class SplitDeepCFRTrainer:
         pa_obs, pa_masks, pa_targets, pa_acts = [], [], [], []
         ps_obs, ps_masks, ps_strats = [], [], []
 
+        _SHM_KEYS = [
+            'b_ao', 'b_am', 'b_at', 'b_aa',
+            'b_so', 'b_sm', 'b_ss',
+            'p_ao', 'p_am', 'p_at', 'p_aa',
+            'p_so', 'p_sm', 'p_ss',
+        ]
         for res in results:
-            (b_ao, b_am, b_at, b_aa,
-             b_so, b_sm, b_ss,
-             p_ao, p_am, p_at, p_aa,
-             p_so, p_sm, p_ss) = res
+            if isinstance(res, str):
+                # Worker wrote to /dev/shm to skip pickle overhead
+                _d = np.load(res, allow_pickle=False)
+                (b_ao, b_am, b_at, b_aa,
+                 b_so, b_sm, b_ss,
+                 p_ao, p_am, p_at, p_aa,
+                 p_so, p_sm, p_ss) = [_d[k] for k in _SHM_KEYS]
+                _d.close()
+                os.unlink(res)
+            else:
+                (b_ao, b_am, b_at, b_aa,
+                 b_so, b_sm, b_ss,
+                 p_ao, p_am, p_at, p_aa,
+                 p_so, p_sm, p_ss) = res
             if b_ao.shape[0]:
                 ba_obs.append(b_ao); ba_masks.append(b_am)
                 ba_targets.append(b_at); ba_acts.append(b_aa)

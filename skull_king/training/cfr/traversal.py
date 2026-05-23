@@ -14,6 +14,7 @@ separate processes via multiprocessing.Pool.
 """
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 import numpy as np
@@ -521,17 +522,27 @@ def worker_task_split(args: tuple) -> tuple:
 
 
 _WORKER_TIMED = False   # print timing once per worker process
+_WORKER_BATCH_IDX = 0  # counter for unique filenames per worker
+_SHM_AVAILABLE = os.path.exists("/dev/shm")
+
+_ARRAY_KEYS = [
+    'b_ao', 'b_am', 'b_at', 'b_aa',
+    'b_so', 'b_sm', 'b_ss',
+    'p_ao', 'p_am', 'p_at', 'p_aa',
+    'p_so', 'p_sm', 'p_ss',
+]
 
 
-def worker_batch_task_split(args_list: list) -> tuple:
-    """Process a batch of traversals and return 14 concatenated arrays.
+def worker_batch_task_split(args_list: list):
+    """Process a batch of traversals; return 14 concatenated arrays or /dev/shm path.
 
-    Batching reduces IPC pickle overhead from O(n_tasks × 14 arrays) to
-    O(n_batches × 14 arrays) — ~50× fewer pickle calls, eliminating the
-    10-20s collect bottleneck when running 10k traversals.
+    When /dev/shm is available, writes results there and returns a path string
+    (~200 bytes IPC) instead of ~43 MB of pickled numpy arrays. The main
+    process reads the file and deletes it. This eliminates the sequential
+    pickle bottleneck in multiprocessing.Queue (100 × 43 MB → 100 × 200 B).
     """
-    global _WORKER_TIMED
-    import time, sys, os
+    global _WORKER_TIMED, _WORKER_BATCH_IDX
+    import time, sys
     _maybe_reload_weights_split()
     t0 = time.time()
     results = []
@@ -550,10 +561,19 @@ def worker_batch_task_split(args_list: list) -> tuple:
         print(f"  [worker pid={os.getpid()}] {backend} {len(args_list)} trav "
               f"in {trav:.2f}s = {ms:.1f}ms each", file=sys.stderr, flush=True)
         _WORKER_TIMED = True
-    return tuple(
+
+    arrays = tuple(
         np.concatenate([r[i] for r in results], axis=0)
         for i in range(14)
     )
+
+    if _SHM_AVAILABLE:
+        _WORKER_BATCH_IDX += 1
+        fname = f"/dev/shm/cfr_{os.getpid()}_{_WORKER_BATCH_IDX}.npz"
+        np.savez(fname, **dict(zip(_ARRAY_KEYS, arrays)))
+        return fname   # tiny string through IPC instead of 43 MB
+
+    return arrays      # fallback: direct pickle (slow, but safe)
 
 
 def traverse_split(
