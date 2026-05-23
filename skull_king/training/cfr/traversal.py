@@ -569,9 +569,11 @@ def worker_batch_task_split(args_list: list):
 
     if _SHM_AVAILABLE:
         _WORKER_BATCH_IDX += 1
-        fname = f"/dev/shm/cfr_{os.getpid()}_{_WORKER_BATCH_IDX}.npz"
-        np.savez(fname, **dict(zip(_ARRAY_KEYS, arrays)))
-        return fname   # tiny string through IPC instead of 43 MB
+        prefix = f"/dev/shm/cfr_{os.getpid()}_{_WORKER_BATCH_IDX}"
+        # .npy (raw binary, no ZIP) + mmap_mode on read → near-zero load latency
+        for key, arr in zip(_ARRAY_KEYS, arrays):
+            np.save(f"{prefix}_{key}.npy", arr)
+        return prefix  # tiny string through IPC instead of 43 MB
 
     return arrays      # fallback: direct pickle (slow, but safe)
 

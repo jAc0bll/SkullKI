@@ -663,14 +663,20 @@ class SplitDeepCFRTrainer:
         ]
         for res in results:
             if isinstance(res, str):
-                # Worker wrote to /dev/shm to skip pickle overhead
-                _d = np.load(res, allow_pickle=False)
+                # Worker wrote 14 .npy files to /dev/shm; mmap_mode='r' = zero-copy load
+                prefix = res
                 (b_ao, b_am, b_at, b_aa,
                  b_so, b_sm, b_ss,
                  p_ao, p_am, p_at, p_aa,
-                 p_so, p_sm, p_ss) = [_d[k] for k in _SHM_KEYS]
-                _d.close()
-                os.unlink(res)
+                 p_so, p_sm, p_ss) = [
+                    np.load(f"{prefix}_{key}.npy", mmap_mode='r')
+                    for key in _SHM_KEYS
+                ]
+                for key in _SHM_KEYS:
+                    try:
+                        os.unlink(f"{prefix}_{key}.npy")
+                    except OSError:
+                        pass
             else:
                 (b_ao, b_am, b_at, b_aa,
                  b_so, b_sm, b_ss,
