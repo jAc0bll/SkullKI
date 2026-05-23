@@ -556,7 +556,11 @@ class SplitDeepCFRTrainer:
                 t0 = time.time()
 
                 self._reset_adv()
+                tc = time.time()
                 self._collect(t, persistent_pool)
+                t_collect = time.time() - tc
+
+                tt = time.time()
                 bid_adv_loss = self._train_net(
                     self.bid_adv_net, self.bid_adv_opt, self.bid_adv_buf,
                     cfg.adv_batch_size, cfg.adv_train_steps, mode="adv",
@@ -573,6 +577,7 @@ class SplitDeepCFRTrainer:
                     self.play_strat_net, self.play_strat_opt, self.play_strat_buf,
                     cfg.strat_batch_size, cfg.strat_train_steps, mode="strat",
                 )
+                t_train = time.time() - tt
 
                 elapsed = time.time() - t0
                 print(
@@ -581,7 +586,7 @@ class SplitDeepCFRTrainer:
                     f"  p_adv={play_adv_loss:.3f} p_str={play_strat_loss:.3f}"
                     f"  bid_buf={len(self.bid_adv_buf):,}"
                     f"  play_buf={len(self.play_adv_buf):,}"
-                    f"  {elapsed:.1f}s/it",
+                    f"  collect={t_collect:.1f}s train={t_train:.1f}s total={elapsed:.1f}s",
                     flush=True,
                 )
 
