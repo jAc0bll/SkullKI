@@ -24,8 +24,9 @@ echo "=== Skull King CFR v7 — RunPod Setup ==="
 
 # ── 1. Clone or update repo ────────────────────────────────────────────────
 if [ -d "$REPO_DIR/.git" ]; then
-    echo "[1/5] Updating repo..."
-    git -C "$REPO_DIR" pull --ff-only
+    echo "[1/5] Updating repo (ensuring features branch)..."
+    git -C "$REPO_DIR" fetch origin
+    git -C "$REPO_DIR" checkout -B features origin/features
 else
     echo "[1/5] Cloning repo (features branch)..."
     git clone --branch features "$REPO_URL" "$REPO_DIR"
