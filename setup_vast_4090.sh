@@ -59,9 +59,9 @@ echo "[4/6] Building C extension (traverse_split ~5ms/game)..."
 echo "      Build complete."
 
 # Verify C engine loaded
-python3 - <<'PYEOF'
+python3 - "$REPO_DIR" <<'PYEOF'
 import sys
-sys.path.insert(0, "$REPO_DIR")
+sys.path.insert(0, sys.argv[1])
 from skull_king.cfr_engine import SplitCEngine
 if SplitCEngine.available:
     print("  C engine: ACTIVE (split traversal)")
