@@ -484,14 +484,23 @@ class SplitDeepCFRTrainer:
     def train(self) -> None:
         cfg = self.cfg
         total_traversals = cfg.traversals_per_player * cfg.n_players
-        _console.print(f"\n{'='*66}")
-        _console.print(f"  Deep CFR (split nets)  -  {cfg.run_name}")
-        _console.print(
-            f"  {cfg.n_cfr_iterations} iters  x  {total_traversals} traversals/iter"
-            f"  x  workers={cfg.num_workers}"
-        )
-        _console.print(f"  device: {self.device}")
-        _console.print(f"{'='*66}\n")
+
+        def _p(msg: str = "") -> None:
+            print(msg, flush=True)
+
+        _p(f"\n{'='*66}")
+        _p(f"  Deep CFR (split nets)  -  {cfg.run_name}")
+        _p(f"  {cfg.n_cfr_iterations} iters x {total_traversals} traversals/iter"
+           f"  x  workers={cfg.num_workers}")
+        _p(f"  device: {self.device}")
+        if self.device.type == "cuda":
+            import torch.cuda as _cu
+            gpu_name = _cu.get_device_name(0)
+            gpu_gb   = _cu.get_device_properties(0).total_memory / 1e9
+            _test = torch.ones(128, 128, device=self.device) @ torch.ones(128, 128, device=self.device)
+            _p(f"  GPU verified: {gpu_name}  ({gpu_gb:.0f} GB)  [matmul OK]")
+            del _test
+        _p(f"{'='*66}\n")
 
         self._is_windows = sys.platform == "win32"
         self._ctx = multiprocessing.get_context("spawn" if self._is_windows else "fork")
@@ -526,63 +535,47 @@ class SplitDeepCFRTrainer:
             )
 
         try:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                MofNCompleteColumn(),
-                TextColumn("[cyan]{task.fields[metrics]}"),
-                TimeRemainingColumn(),
-                console=_console,
-                refresh_per_second=4,
-            ) as progress:
-                task = progress.add_task(
-                    "CFR Split Training",
-                    total=cfg.n_cfr_iterations,
-                    metrics="",
+            for t in range(1, cfg.n_cfr_iterations + 1):
+                t0 = time.time()
+
+                self._reset_adv()
+                self._collect(t, persistent_pool)
+                bid_adv_loss = self._train_net(
+                    self.bid_adv_net, self.bid_adv_opt, self.bid_adv_buf,
+                    cfg.adv_batch_size, cfg.adv_train_steps, mode="adv",
+                )
+                bid_strat_loss = self._train_net(
+                    self.bid_strat_net, self.bid_strat_opt, self.bid_strat_buf,
+                    cfg.strat_batch_size, cfg.strat_train_steps, mode="strat",
+                )
+                play_adv_loss = self._train_net(
+                    self.play_adv_net, self.play_adv_opt, self.play_adv_buf,
+                    cfg.adv_batch_size, cfg.adv_train_steps, mode="adv",
+                )
+                play_strat_loss = self._train_net(
+                    self.play_strat_net, self.play_strat_opt, self.play_strat_buf,
+                    cfg.strat_batch_size, cfg.strat_train_steps, mode="strat",
                 )
 
-                for t in range(1, cfg.n_cfr_iterations + 1):
-                    t0 = time.time()
+                elapsed = time.time() - t0
+                print(
+                    f"iter {t:4d}/{cfg.n_cfr_iterations}"
+                    f"  b_adv={bid_adv_loss:.3f} b_str={bid_strat_loss:.3f}"
+                    f"  p_adv={play_adv_loss:.3f} p_str={play_strat_loss:.3f}"
+                    f"  bid_buf={len(self.bid_adv_buf):,}"
+                    f"  play_buf={len(self.play_adv_buf):,}"
+                    f"  {elapsed:.1f}s/it",
+                    flush=True,
+                )
 
-                    self._reset_adv()
-                    self._collect(t, persistent_pool)
-                    bid_adv_loss = self._train_net(
-                        self.bid_adv_net, self.bid_adv_opt, self.bid_adv_buf,
-                        cfg.adv_batch_size, cfg.adv_train_steps, mode="adv",
-                    )
-                    bid_strat_loss = self._train_net(
-                        self.bid_strat_net, self.bid_strat_opt, self.bid_strat_buf,
-                        cfg.strat_batch_size, cfg.strat_train_steps, mode="strat",
-                    )
-                    play_adv_loss = self._train_net(
-                        self.play_adv_net, self.play_adv_opt, self.play_adv_buf,
-                        cfg.adv_batch_size, cfg.adv_train_steps, mode="adv",
-                    )
-                    play_strat_loss = self._train_net(
-                        self.play_strat_net, self.play_strat_opt, self.play_strat_buf,
-                        cfg.strat_batch_size, cfg.strat_train_steps, mode="strat",
-                    )
+                if t % cfg.eval_every_n_iters == 0:
+                    self._evaluate(t)
 
-                    elapsed = time.time() - t0
-                    progress.update(
-                        task,
-                        advance=1,
-                        metrics=(
-                            f"b_adv={bid_adv_loss:.3f} b_str={bid_strat_loss:.3f}"
-                            f" p_adv={play_adv_loss:.3f} p_str={play_strat_loss:.3f}"
-                            f"  {elapsed:.1f}s/it"
-                        ),
-                    )
-
-                    if t % cfg.eval_every_n_iters == 0:
-                        progress.print("")
-                        self._evaluate(t, progress)
-
-                    if t % cfg.checkpoint_every_n_iters == 0:
-                        path = os.path.join(cfg.model_dir, f"{cfg.run_name}_iter{t}")
-                        self._save(path)
-                        progress.print(f"  [Checkpoint] -> {path}_{{bid,play}}_{{adv,strat}}.pt")
+                if t % cfg.checkpoint_every_n_iters == 0:
+                    path = os.path.join(cfg.model_dir, f"{cfg.run_name}_iter{t}")
+                    self._save(path)
+                    print(f"  [Checkpoint] -> {path}_{{bid,play}}_{{adv,strat}}.pt",
+                          flush=True)
         finally:
             if persistent_pool is not None:
                 persistent_pool.close()
@@ -592,7 +585,8 @@ class SplitDeepCFRTrainer:
 
         final = os.path.join(cfg.model_dir, "cfr_split_final")
         self._save(final)
-        _console.print(f"\nTraining complete. Saved -> {final}_{{bid,play}}_{{adv,strat}}.pt")
+        print(f"\nTraining complete. Saved -> {final}_{{bid,play}}_{{adv,strat}}.pt",
+              flush=True)
 
     def _reset_adv(self) -> None:
         self.bid_adv_opt = torch.optim.Adam(self.bid_adv_net.parameters(), lr=self.cfg.adv_lr)
@@ -708,29 +702,25 @@ class SplitDeepCFRTrainer:
         net.eval()
         return total / effective_steps
 
-    def _evaluate(self, t: int, progress=None) -> None:
+    def _evaluate(self, t: int) -> None:
         from skull_king.training.cfr.agent import SplitCFRAgent
         n = self.cfg.n_players
         agent = SplitCFRAgent(
             self.bid_strat_net, self.play_strat_net, n_players=n, name="CFR-split"
         )
         runner = TournamentRunner(seed=999)
-        r_r = runner.run([agent] + [RandomAgent(i) for i in range(n - 1)], n_games=100)
-        r_h = runner.run([agent] + [HeuristicAgent() for _ in range(n - 1)], n_games=100)
+        r_r = runner.run([agent] + [RandomAgent(i) for i in range(n - 1)], n_games=200)
+        r_h = runner.run([agent] + [HeuristicAgent() for _ in range(n - 1)], n_games=200)
         wr_r = r_r.win_rates().get("CFR-split", 0.0)
         wr_h = r_h.win_rates().get("CFR-split", 0.0)
         avg_r = r_r.avg_scores().get("CFR-split", 0.0)
         avg_h = r_h.avg_scores().get("CFR-split", 0.0)
-        msg = (
-            f"  [Eval iter={t}]"
+        print(
+            f"  [EVAL iter={t}]"
             f"  vs_random={wr_r:.1%} ({avg_r:+.0f})"
-            f"  vs_heuristic={wr_h:.1%} ({avg_h:+.0f})"
-            f"  bid_buf={len(self.bid_adv_buf):,}  play_buf={len(self.play_adv_buf):,}"
+            f"  vs_heuristic={wr_h:.1%} ({avg_h:+.0f})",
+            flush=True,
         )
-        if progress is not None:
-            progress.print(msg)
-        else:
-            _console.print(msg)
 
     def _save(self, base_path: str) -> None:
         torch.save(self.bid_adv_net.state_dict(), f"{base_path}_bid_adv.pt")
