@@ -13,6 +13,8 @@ if [ -d "/workspace" ]; then
 else
     REPO_DIR="/root/SkullKI"
 fi
+VENV="$REPO_DIR/venv"
+PY="$VENV/bin/python"
 CONFIG="$REPO_DIR/cfr_config_v7_4090.yaml"
 LOG="$REPO_DIR/training_v7_4090.log"
 SESSION="cfr_v7"
@@ -32,14 +34,22 @@ fi
 echo "      Config files found:"
 ls "$REPO_DIR"/*.yaml
 
-# ── 2. Install Python dependencies ────────────────────────────────────────
-echo "[2/6] Installing dependencies..."
-pip install --quiet --upgrade pip
-pip install --quiet -r "$REPO_DIR/requirements.txt"
+# ── 2. Venv + dependencies ────────────────────────────────────────────────
+echo "[2/6] Setting up venv..."
+if [ ! -f "$VENV/bin/activate" ]; then
+    python3 -m venv "$VENV"
+    echo "      Created venv at $VENV"
+else
+    echo "      Venv already exists — reusing"
+fi
+
+"$VENV/bin/pip" install --quiet --upgrade pip
+"$VENV/bin/pip" install --quiet -r "$REPO_DIR/requirements.txt"
+echo "      Dependencies installed."
 
 # ── 3. Verify GPU ─────────────────────────────────────────────────────────
 echo "[3/6] GPU check..."
-python3 - <<'EOF'
+"$PY" - <<'EOF'
 import torch, sys
 if not torch.cuda.is_available():
     print("  ERROR: CUDA not available — aborting")
@@ -54,12 +64,11 @@ EOF
 echo "[4/6] Building C extension (traverse_split ~5ms/game)..."
 (
     cd "$REPO_DIR/skull_king/_core"
-    python setup_engine.py build_ext --inplace 2>&1 | tail -5
+    "$PY" setup_engine.py build_ext --inplace 2>&1 | tail -5
 )
 echo "      Build complete."
 
-# Verify C engine loaded
-python3 - "$REPO_DIR" <<'PYEOF'
+"$PY" - "$REPO_DIR" <<'PYEOF'
 import sys
 sys.path.insert(0, sys.argv[1])
 from skull_king.cfr_engine import SplitCEngine
@@ -75,7 +84,7 @@ cat "$CONFIG"
 
 # ── 6. Launch in tmux (fall back to screen if missing) ────────────────────
 echo "[6/6] Starting training..."
-TRAIN_CMD="cd '$REPO_DIR' && python -m skull_king.training.cfr.train --config '$CONFIG' 2>&1 | tee '$LOG'; echo 'Done.'"
+TRAIN_CMD="source '$VENV/bin/activate' && cd '$REPO_DIR' && python -m skull_king.training.cfr.train --config '$CONFIG' 2>&1 | tee '$LOG'; echo 'Done.'"
 
 if command -v tmux &>/dev/null; then
     tmux kill-session -t "$SESSION" 2>/dev/null || true
