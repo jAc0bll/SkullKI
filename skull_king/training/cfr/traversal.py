@@ -483,7 +483,15 @@ def worker_init_split(
     _SHARED_W = shared_w
     _SHARED_V = shared_v
     _LOCAL_V = 0
-    _C_ENGINE = None   # C engine does not support split nets
+    try:
+        from skull_king.cfr_engine import SplitCEngine
+        if SplitCEngine.available:
+            _C_ENGINE = SplitCEngine(n_players=n_players, heuristic_frac=heuristic_frac)
+            _C_ENGINE.load_weights(bid_adv_weights, play_adv_weights)
+        else:
+            _C_ENGINE = None
+    except Exception:
+        _C_ENGINE = None
 
 
 def _maybe_reload_weights_split() -> None:
@@ -498,6 +506,8 @@ def _maybe_reload_weights_split() -> None:
             _BID_ADV_NET.load_state_dict(w["bid_weights"])
         if _PLAY_ADV_NET is not None:
             _PLAY_ADV_NET.load_state_dict(w["play_weights"])
+        if _C_ENGINE is not None:
+            _C_ENGINE.load_weights(w["bid_weights"], w["play_weights"])
         _LOCAL_V = v
 
 
@@ -505,6 +515,8 @@ def worker_task_split(args: tuple) -> tuple:
     """Split-network variant of worker_task. Returns 14 arrays."""
     _maybe_reload_weights_split()
     traverser, seed, n_players = args
+    if _C_ENGINE is not None:
+        return _C_ENGINE.traverse(traverser, int(seed))
     return traverse_split(traverser, _BID_ADV_NET, _PLAY_ADV_NET, _UTIL_ENV, seed, n_players)
 
 

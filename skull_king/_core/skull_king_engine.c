@@ -69,6 +69,14 @@
 #define MLP_H2      512
 #define MLP_OUT      82
 
+/* Split-net dimensions */
+#define BID_H1    256
+#define BID_H2    256
+#define BID_OUT    11   /* bid actions 0-10 */
+#define PLAY_H1   512
+#define PLAY_H2   512
+#define PLAY_OUT   71   /* play: slots 0-68 + TIG_ESCAPE(69) + TIG_PIRATE(70) */
+
 /* ─── Slot → card property lookups (inlined) ─────────────────────────────── */
 static inline int slot_ctype(int s)  { return (s<56)?CT_NUMBERED:(s<61)?CT_ESCAPE:(s<66)?CT_PIRATE:(s<68)?CT_MERMAID:(s==68)?CT_SKULL_KING:CT_TIGRESS; }
 static inline int slot_suit(int s)   { return (s<56)?(s/14):SUIT_NONE; }
@@ -116,9 +124,31 @@ typedef struct {
     float b3[MLP_OUT];
 } MLPWeights;
 
+typedef struct {
+    float w1[BID_H1][MLP_IN];
+    float b1[BID_H1];
+    float w2[BID_H2][BID_H1];
+    float b2[BID_H2];
+    float w3[BID_OUT][BID_H2];
+    float b3[BID_OUT];
+} BidMLPWeights;
+
+typedef struct {
+    float w1[PLAY_H1][MLP_IN];
+    float b1[PLAY_H1];
+    float w2[PLAY_H2][PLAY_H1];
+    float b2[PLAY_H2];
+    float w3[PLAY_OUT][PLAY_H2];
+    float b3[PLAY_OUT];
+} PlayMLPWeights;
+
 /* Global advantage-net weights (loaded once per worker via set_adv_weights) */
 static MLPWeights g_adv;
 static int        g_weights_loaded = 0;
+static BidMLPWeights  g_bid_adv;
+static PlayMLPWeights g_play_adv;
+static int            g_bid_loaded  = 0;
+static int            g_play_loaded = 0;
 
 /* ─── RNG (xorshift64) ───────────────────────────────────────────────────── */
 static inline uint64_t rng_next(uint64_t *s) {
@@ -696,6 +726,52 @@ static void mlp_forward(const MLPWeights *w, const float obs[MLP_IN], float out[
     matvec     ((const float *)w->w3, w->b3, h2,  out, MLP_OUT, MLP_H2);
 }
 
+static void bid_mlp_forward(const float obs[MLP_IN], float out[BID_OUT]) {
+    float h1[BID_H1], h2[BID_H2];
+    matvec_relu((const float *)g_bid_adv.w1, g_bid_adv.b1, obs, h1, BID_H1, MLP_IN);
+    matvec_relu((const float *)g_bid_adv.w2, g_bid_adv.b2, h1, h2, BID_H2, BID_H1);
+    matvec     ((const float *)g_bid_adv.w3, g_bid_adv.b3, h2, out, BID_OUT, BID_H2);
+}
+
+static void play_mlp_forward(const float obs[MLP_IN], float out[PLAY_OUT]) {
+    float h1[PLAY_H1], h2[PLAY_H2];
+    matvec_relu((const float *)g_play_adv.w1, g_play_adv.b1, obs, h1, PLAY_H1, MLP_IN);
+    matvec_relu((const float *)g_play_adv.w2, g_play_adv.b2, h1, h2, PLAY_H2, PLAY_H1);
+    matvec     ((const float *)g_play_adv.w3, g_play_adv.b3, h2, out, PLAY_OUT, PLAY_H2);
+}
+
+/* Generic regret matching and sampling (variable action-space size N) */
+static void regret_match_n(const float *adv, const uint8_t *mask, float *strat, int N) {
+    float total = 0.0f;
+    for (int a = 0; a < N; a++) {
+        float v = (mask[a] && adv[a] > 0.0f) ? adv[a] : 0.0f;
+        strat[a] = v;
+        total += v;
+    }
+    if (total < 1e-12f) {
+        int nl = 0;
+        for (int a = 0; a < N; a++) nl += mask[a];
+        float u = nl > 0 ? (1.0f / (float)nl) : 0.0f;
+        for (int a = 0; a < N; a++) strat[a] = mask[a] ? u : 0.0f;
+    } else {
+        float inv = 1.0f / total;
+        for (int a = 0; a < N; a++) strat[a] *= inv;
+    }
+}
+
+static int sample_action_n(const float *strat, const uint8_t *mask, int N, uint64_t *rng) {
+    float r = rng_float(rng);
+    float cum = 0.0f;
+    int last = -1;
+    for (int a = 0; a < N; a++) {
+        if (!mask[a]) continue;
+        last = a;
+        cum += strat[a];
+        if (r < cum) return a;
+    }
+    return (last >= 0) ? last : 0;
+}
+
 /* ─── Regret matching ────────────────────────────────────────────────────── */
 
 static void regret_match(const float adv[ACTION_SIZE], const uint8_t mask[ACTION_SIZE],
@@ -747,6 +823,30 @@ static int     t_indices[MAX_TRAV_DEC];
 static int     t_actions[MAX_TRAV_DEC];
 static float   t_adv_ests[MAX_TRAV_DEC][ACTION_SIZE];
 static int     t_n;
+
+/* ─── Split traversal buffers ────────────────────────────────────────────── */
+static float   sp_bid_obs  [MAX_DECISIONS][MLP_IN];
+static uint8_t sp_bid_masks[MAX_DECISIONS][BID_OUT];
+static float   sp_bid_strats[MAX_DECISIONS][BID_OUT];
+static int     sp_bid_n;
+
+static float   sp_play_obs  [MAX_DECISIONS][MLP_IN];
+static uint8_t sp_play_masks[MAX_DECISIONS][PLAY_OUT];
+static float   sp_play_strats[MAX_DECISIONS][PLAY_OUT];
+static int     sp_play_n;
+
+static int   tp_bid_si  [MAX_TRAV_DEC];
+static int   tp_bid_acts[MAX_TRAV_DEC];
+static float tp_bid_adv [MAX_TRAV_DEC][BID_OUT];
+static int   tp_bid_n;
+
+static int   tp_play_si  [MAX_TRAV_DEC];
+static int   tp_play_acts[MAX_TRAV_DEC];
+static float tp_play_adv [MAX_TRAV_DEC][PLAY_OUT];
+static int   tp_play_n;
+
+static float sp_bid_adv_tgts [MAX_TRAV_DEC][BID_OUT];
+static float sp_play_adv_tgts[MAX_TRAV_DEC][PLAY_OUT];
 
 /* ─── Core traversal ─────────────────────────────────────────────────────── */
 
@@ -850,6 +950,133 @@ static int do_traverse(int traverser, uint64_t seed, int n_players,
     *adv_n_out        = t_n;
     *strat_n_out      = s_n;
     return 0;
+}
+
+/* ─── Split traversal ────────────────────────────────────────────────────── */
+
+static void do_traverse_split(int traverser, uint64_t seed, int n_players,
+                               float heuristic_frac)
+{
+    GameState gs;
+    gs_init(&gs, n_players, seed);
+    uint64_t rng = seed ^ 0xDEADBEEFCAFEBABEULL;
+
+    sp_bid_n = 0; sp_play_n = 0;
+    tp_bid_n = 0; tp_play_n = 0;
+
+    while (gs.phase != PHASE_GAMEOVER) {
+        int p = gs_current_player(&gs);
+        uint8_t full_mask[ACTION_SIZE];
+        gs_legal_mask(&gs, full_mask);
+
+        if (gs.phase == PHASE_BIDDING) {
+            if (sp_bid_n >= MAX_DECISIONS) break;
+            gs_build_obs(&gs, p, sp_bid_obs[sp_bid_n]);
+            memcpy(sp_bid_masks[sp_bid_n], full_mask, BID_OUT);
+
+            float adv_est[BID_OUT];
+            bid_mlp_forward(sp_bid_obs[sp_bid_n], adv_est);
+            for (int a = 0; a < BID_OUT; a++)
+                if (!sp_bid_masks[sp_bid_n][a]) adv_est[a] = 0.0f;
+            regret_match_n(adv_est, sp_bid_masks[sp_bid_n],
+                           sp_bid_strats[sp_bid_n], BID_OUT);
+
+            int abs_action;
+            if (p == traverser && tp_bid_n < MAX_TRAV_DEC) {
+                tp_bid_si[tp_bid_n] = sp_bid_n;
+                memcpy(tp_bid_adv[tp_bid_n], adv_est, BID_OUT * sizeof(float));
+                abs_action = sample_action_n(sp_bid_strats[sp_bid_n],
+                                             sp_bid_masks[sp_bid_n], BID_OUT, &rng);
+                tp_bid_acts[tp_bid_n] = abs_action; /* bid local == absolute */
+                tp_bid_n++;
+            } else if (p != traverser && heuristic_frac > 0.0f
+                       && rng_float(&rng) < heuristic_frac) {
+                abs_action = heuristic_action(&gs, p);
+            } else {
+                abs_action = sample_action_n(sp_bid_strats[sp_bid_n],
+                                             sp_bid_masks[sp_bid_n], BID_OUT, &rng);
+            }
+            sp_bid_n++;
+            gs_apply_action(&gs, abs_action);
+
+        } else { /* PHASE_PLAYING */
+            if (sp_play_n >= MAX_DECISIONS) break;
+            gs_build_obs(&gs, p, sp_play_obs[sp_play_n]);
+
+            /* Absolute → local play mask */
+            int a;
+            for (a = 0; a < 69; a++)
+                sp_play_masks[sp_play_n][a] = full_mask[N_BID_ACTIONS + a];
+            sp_play_masks[sp_play_n][69] = full_mask[ACT_TIG_ESCAPE];
+            sp_play_masks[sp_play_n][70] = full_mask[ACT_TIG_PIRATE];
+
+            float adv_est[PLAY_OUT];
+            play_mlp_forward(sp_play_obs[sp_play_n], adv_est);
+            for (a = 0; a < PLAY_OUT; a++)
+                if (!sp_play_masks[sp_play_n][a]) adv_est[a] = 0.0f;
+            regret_match_n(adv_est, sp_play_masks[sp_play_n],
+                           sp_play_strats[sp_play_n], PLAY_OUT);
+
+            int abs_action;
+            if (p == traverser && tp_play_n < MAX_TRAV_DEC) {
+                int local = sample_action_n(sp_play_strats[sp_play_n],
+                                            sp_play_masks[sp_play_n], PLAY_OUT, &rng);
+                tp_play_si  [tp_play_n] = sp_play_n;
+                tp_play_acts[tp_play_n] = local;
+                memcpy(tp_play_adv[tp_play_n], adv_est, PLAY_OUT * sizeof(float));
+                tp_play_n++;
+                abs_action = (local < 69) ? N_BID_ACTIONS + local
+                           : (local == 69) ? ACT_TIG_ESCAPE : ACT_TIG_PIRATE;
+            } else if (p != traverser && heuristic_frac > 0.0f
+                       && rng_float(&rng) < heuristic_frac) {
+                abs_action = heuristic_action(&gs, p);
+            } else {
+                int local = sample_action_n(sp_play_strats[sp_play_n],
+                                            sp_play_masks[sp_play_n], PLAY_OUT, &rng);
+                abs_action = (local < 69) ? N_BID_ACTIONS + local
+                           : (local == 69) ? ACT_TIG_ESCAPE : ACT_TIG_PIRATE;
+            }
+            sp_play_n++;
+            gs_apply_action(&gs, abs_action);
+        }
+    }
+
+    float utility = gs_utility(&gs, traverser);
+
+    /* Bid advantage targets */
+    int k;
+    for (k = 0; k < tp_bid_n; k++) {
+        int idx = tp_bid_si[k];
+        memset(sp_bid_adv_tgts[k], 0, BID_OUT * sizeof(float));
+        const float   *ae  = tp_bid_adv[k];
+        const float   *st  = sp_bid_strats[idx];
+        const uint8_t *msk = sp_bid_masks[idx];
+        float baseline = 0.0f;
+        for (int a = 0; a < BID_OUT; a++)
+            if (msk[a]) baseline += st[a] * ae[a];
+        for (int a = 0; a < BID_OUT; a++)
+            if (msk[a]) sp_bid_adv_tgts[k][a] = ae[a] - baseline;
+        int at = tp_bid_acts[k];
+        float prob = st[at] > 0.05f ? st[at] : 0.05f;
+        sp_bid_adv_tgts[k][at] = (utility - baseline) / prob;
+    }
+
+    /* Play advantage targets */
+    for (k = 0; k < tp_play_n; k++) {
+        int idx = tp_play_si[k];
+        memset(sp_play_adv_tgts[k], 0, PLAY_OUT * sizeof(float));
+        const float   *ae  = tp_play_adv[k];
+        const float   *st  = sp_play_strats[idx];
+        const uint8_t *msk = sp_play_masks[idx];
+        float baseline = 0.0f;
+        for (int a = 0; a < PLAY_OUT; a++)
+            if (msk[a]) baseline += st[a] * ae[a];
+        for (int a = 0; a < PLAY_OUT; a++)
+            if (msk[a]) sp_play_adv_tgts[k][a] = ae[a] - baseline;
+        int at = tp_play_acts[k];
+        float prob = st[at] > 0.05f ? st[at] : 0.05f;
+        sp_play_adv_tgts[k][at] = (utility - baseline) / prob;
+    }
 }
 
 /* ─── Python extension functions ─────────────────────────────────────────── */
@@ -994,6 +1221,185 @@ static PyObject *py_traverse(PyObject *self, PyObject *args) {
     return result;
 }
 
+static PyObject *py_set_bid_adv_weights(PyObject *self, PyObject *args) {
+    PyObject *w1o, *b1o, *w2o, *b2o, *w3o, *b3o;
+    if (!PyArg_ParseTuple(args, "OOOOOO", &w1o, &b1o, &w2o, &b2o, &w3o, &b3o))
+        return NULL;
+    Py_buffer w1b, b1b, w2b, b2b, w3b, b3b;
+#define GET_BUF_BID(obj, buf) \
+    if (PyObject_GetBuffer(obj, &buf, PyBUF_SIMPLE|PyBUF_FORMAT) < 0) return NULL;
+    GET_BUF_BID(w1o,w1b); GET_BUF_BID(b1o,b1b);
+    GET_BUF_BID(w2o,w2b); GET_BUF_BID(b2o,b2b);
+    GET_BUF_BID(w3o,w3b); GET_BUF_BID(b3o,b3b);
+#undef GET_BUF_BID
+    const float *src_w1 = (const float *)w1b.buf;
+    for (int i = 0; i < BID_H1; i++) {
+        memcpy(g_bid_adv.w1[i], src_w1 + (size_t)i * MLP_IN_RAW, MLP_IN_RAW * sizeof(float));
+        memset(g_bid_adv.w1[i] + MLP_IN_RAW, 0, (MLP_IN - MLP_IN_RAW) * sizeof(float));
+    }
+    memcpy(g_bid_adv.b1, b1b.buf, BID_H1 * sizeof(float));
+    memcpy(g_bid_adv.w2, w2b.buf, (size_t)BID_H2 * BID_H1 * sizeof(float));
+    memcpy(g_bid_adv.b2, b2b.buf, BID_H2 * sizeof(float));
+    memcpy(g_bid_adv.w3, w3b.buf, (size_t)BID_OUT * BID_H2 * sizeof(float));
+    memcpy(g_bid_adv.b3, b3b.buf, BID_OUT * sizeof(float));
+    PyBuffer_Release(&w1b); PyBuffer_Release(&b1b);
+    PyBuffer_Release(&w2b); PyBuffer_Release(&b2b);
+    PyBuffer_Release(&w3b); PyBuffer_Release(&b3b);
+    g_bid_loaded = 1;
+    Py_RETURN_NONE;
+}
+
+static PyObject *py_set_play_adv_weights(PyObject *self, PyObject *args) {
+    PyObject *w1o, *b1o, *w2o, *b2o, *w3o, *b3o;
+    if (!PyArg_ParseTuple(args, "OOOOOO", &w1o, &b1o, &w2o, &b2o, &w3o, &b3o))
+        return NULL;
+    Py_buffer w1b, b1b, w2b, b2b, w3b, b3b;
+#define GET_BUF_PLAY(obj, buf) \
+    if (PyObject_GetBuffer(obj, &buf, PyBUF_SIMPLE|PyBUF_FORMAT) < 0) return NULL;
+    GET_BUF_PLAY(w1o,w1b); GET_BUF_PLAY(b1o,b1b);
+    GET_BUF_PLAY(w2o,w2b); GET_BUF_PLAY(b2o,b2b);
+    GET_BUF_PLAY(w3o,w3b); GET_BUF_PLAY(b3o,b3b);
+#undef GET_BUF_PLAY
+    const float *src_w1 = (const float *)w1b.buf;
+    for (int i = 0; i < PLAY_H1; i++) {
+        memcpy(g_play_adv.w1[i], src_w1 + (size_t)i * MLP_IN_RAW, MLP_IN_RAW * sizeof(float));
+        memset(g_play_adv.w1[i] + MLP_IN_RAW, 0, (MLP_IN - MLP_IN_RAW) * sizeof(float));
+    }
+    memcpy(g_play_adv.b1, b1b.buf, PLAY_H1 * sizeof(float));
+    memcpy(g_play_adv.w2, w2b.buf, (size_t)PLAY_H2 * PLAY_H1 * sizeof(float));
+    memcpy(g_play_adv.b2, b2b.buf, PLAY_H2 * sizeof(float));
+    memcpy(g_play_adv.w3, w3b.buf, (size_t)PLAY_OUT * PLAY_H2 * sizeof(float));
+    memcpy(g_play_adv.b3, b3b.buf, PLAY_OUT * sizeof(float));
+    PyBuffer_Release(&w1b); PyBuffer_Release(&b1b);
+    PyBuffer_Release(&w2b); PyBuffer_Release(&b2b);
+    PyBuffer_Release(&w3b); PyBuffer_Release(&b3b);
+    g_play_loaded = 1;
+    Py_RETURN_NONE;
+}
+
+static PyObject *py_traverse_split(PyObject *self, PyObject *args) {
+    int traverser, n_players;
+    unsigned long long seed;
+    float heuristic_frac = 0.4f;
+
+    if (!PyArg_ParseTuple(args, "iKi|f", &traverser, &seed, &n_players, &heuristic_frac))
+        return NULL;
+
+    if (!g_bid_loaded || !g_play_loaded) {
+        PyErr_SetString(PyExc_RuntimeError,
+            "skull_king_engine: split weights not loaded "
+            "(call set_bid_adv_weights and set_play_adv_weights first)");
+        return NULL;
+    }
+
+    do_traverse_split(traverser, (uint64_t)seed, n_players, heuristic_frac);
+
+    /* Allocate 14 output arrays */
+    npy_intp d_ba_obs[2]  = {tp_bid_n,  OBS_SIZE};
+    npy_intp d_ba_msk[2]  = {tp_bid_n,  BID_OUT};
+    npy_intp d_ba_tgt[2]  = {tp_bid_n,  BID_OUT};
+    npy_intp d_ba_act[1]  = {tp_bid_n};
+    npy_intp d_bs_obs[2]  = {sp_bid_n,  OBS_SIZE};
+    npy_intp d_bs_msk[2]  = {sp_bid_n,  BID_OUT};
+    npy_intp d_bs_str[2]  = {sp_bid_n,  BID_OUT};
+    npy_intp d_pa_obs[2]  = {tp_play_n, OBS_SIZE};
+    npy_intp d_pa_msk[2]  = {tp_play_n, PLAY_OUT};
+    npy_intp d_pa_tgt[2]  = {tp_play_n, PLAY_OUT};
+    npy_intp d_pa_act[1]  = {tp_play_n};
+    npy_intp d_ps_obs[2]  = {sp_play_n, OBS_SIZE};
+    npy_intp d_ps_msk[2]  = {sp_play_n, PLAY_OUT};
+    npy_intp d_ps_str[2]  = {sp_play_n, PLAY_OUT};
+
+    PyObject *ba_obs = PyArray_SimpleNew(2, d_ba_obs, NPY_FLOAT);
+    PyObject *ba_msk = PyArray_SimpleNew(2, d_ba_msk, NPY_BOOL);
+    PyObject *ba_tgt = PyArray_SimpleNew(2, d_ba_tgt, NPY_FLOAT);
+    PyObject *ba_act = PyArray_SimpleNew(1, d_ba_act, NPY_INT64);
+    PyObject *bs_obs = PyArray_SimpleNew(2, d_bs_obs, NPY_FLOAT);
+    PyObject *bs_msk = PyArray_SimpleNew(2, d_bs_msk, NPY_BOOL);
+    PyObject *bs_str = PyArray_SimpleNew(2, d_bs_str, NPY_FLOAT);
+    PyObject *pa_obs = PyArray_SimpleNew(2, d_pa_obs, NPY_FLOAT);
+    PyObject *pa_msk = PyArray_SimpleNew(2, d_pa_msk, NPY_BOOL);
+    PyObject *pa_tgt = PyArray_SimpleNew(2, d_pa_tgt, NPY_FLOAT);
+    PyObject *pa_act = PyArray_SimpleNew(1, d_pa_act, NPY_INT64);
+    PyObject *ps_obs = PyArray_SimpleNew(2, d_ps_obs, NPY_FLOAT);
+    PyObject *ps_msk = PyArray_SimpleNew(2, d_ps_msk, NPY_BOOL);
+    PyObject *ps_str = PyArray_SimpleNew(2, d_ps_str, NPY_FLOAT);
+
+    if (!ba_obs||!ba_msk||!ba_tgt||!ba_act||!bs_obs||!bs_msk||!bs_str||
+        !pa_obs||!pa_msk||!pa_tgt||!pa_act||!ps_obs||!ps_msk||!ps_str) {
+        Py_XDECREF(ba_obs); Py_XDECREF(ba_msk); Py_XDECREF(ba_tgt); Py_XDECREF(ba_act);
+        Py_XDECREF(bs_obs); Py_XDECREF(bs_msk); Py_XDECREF(bs_str);
+        Py_XDECREF(pa_obs); Py_XDECREF(pa_msk); Py_XDECREF(pa_tgt); Py_XDECREF(pa_act);
+        Py_XDECREF(ps_obs); Py_XDECREF(ps_msk); Py_XDECREF(ps_str);
+        return NULL;
+    }
+
+    /* Copy bid advantage data */
+    if (tp_bid_n > 0) {
+        float   *ao = (float   *)PyArray_DATA((PyArrayObject *)ba_obs);
+        uint8_t *am = (uint8_t *)PyArray_DATA((PyArrayObject *)ba_msk);
+        float   *at = (float   *)PyArray_DATA((PyArrayObject *)ba_tgt);
+        int64_t *aa = (int64_t *)PyArray_DATA((PyArrayObject *)ba_act);
+        for (int k = 0; k < tp_bid_n; k++) {
+            int idx = tp_bid_si[k];
+            memcpy(ao + (size_t)k * OBS_SIZE, sp_bid_obs[idx],   OBS_SIZE * sizeof(float));
+            memcpy(am + (size_t)k * BID_OUT,  sp_bid_masks[idx], BID_OUT);
+            memcpy(at + (size_t)k * BID_OUT,  sp_bid_adv_tgts[k], BID_OUT * sizeof(float));
+            aa[k] = (int64_t)tp_bid_acts[k];
+        }
+    }
+
+    /* Copy bid strategy data */
+    if (sp_bid_n > 0) {
+        float   *so = (float   *)PyArray_DATA((PyArrayObject *)bs_obs);
+        uint8_t *sm = (uint8_t *)PyArray_DATA((PyArrayObject *)bs_msk);
+        float   *ss = (float   *)PyArray_DATA((PyArrayObject *)bs_str);
+        for (int k = 0; k < sp_bid_n; k++) {
+            memcpy(so + (size_t)k * OBS_SIZE, sp_bid_obs[k],    OBS_SIZE * sizeof(float));
+            memcpy(sm + (size_t)k * BID_OUT,  sp_bid_masks[k],  BID_OUT);
+            memcpy(ss + (size_t)k * BID_OUT,  sp_bid_strats[k], BID_OUT * sizeof(float));
+        }
+    }
+
+    /* Copy play advantage data */
+    if (tp_play_n > 0) {
+        float   *ao = (float   *)PyArray_DATA((PyArrayObject *)pa_obs);
+        uint8_t *am = (uint8_t *)PyArray_DATA((PyArrayObject *)pa_msk);
+        float   *at = (float   *)PyArray_DATA((PyArrayObject *)pa_tgt);
+        int64_t *aa = (int64_t *)PyArray_DATA((PyArrayObject *)pa_act);
+        for (int k = 0; k < tp_play_n; k++) {
+            int idx = tp_play_si[k];
+            memcpy(ao + (size_t)k * OBS_SIZE,  sp_play_obs[idx],   OBS_SIZE * sizeof(float));
+            memcpy(am + (size_t)k * PLAY_OUT,   sp_play_masks[idx], PLAY_OUT);
+            memcpy(at + (size_t)k * PLAY_OUT,   sp_play_adv_tgts[k], PLAY_OUT * sizeof(float));
+            aa[k] = (int64_t)tp_play_acts[k];
+        }
+    }
+
+    /* Copy play strategy data */
+    if (sp_play_n > 0) {
+        float   *so = (float   *)PyArray_DATA((PyArrayObject *)ps_obs);
+        uint8_t *sm = (uint8_t *)PyArray_DATA((PyArrayObject *)ps_msk);
+        float   *ss = (float   *)PyArray_DATA((PyArrayObject *)ps_str);
+        for (int k = 0; k < sp_play_n; k++) {
+            memcpy(so + (size_t)k * OBS_SIZE,  sp_play_obs[k],    OBS_SIZE * sizeof(float));
+            memcpy(sm + (size_t)k * PLAY_OUT,   sp_play_masks[k],  PLAY_OUT);
+            memcpy(ss + (size_t)k * PLAY_OUT,   sp_play_strats[k], PLAY_OUT * sizeof(float));
+        }
+    }
+
+    PyObject *result = PyTuple_Pack(14,
+        ba_obs, ba_msk, ba_tgt, ba_act,
+        bs_obs, bs_msk, bs_str,
+        pa_obs, pa_msk, pa_tgt, pa_act,
+        ps_obs, ps_msk, ps_str);
+    Py_DECREF(ba_obs); Py_DECREF(ba_msk); Py_DECREF(ba_tgt); Py_DECREF(ba_act);
+    Py_DECREF(bs_obs); Py_DECREF(bs_msk); Py_DECREF(bs_str);
+    Py_DECREF(pa_obs); Py_DECREF(pa_msk); Py_DECREF(pa_tgt); Py_DECREF(pa_act);
+    Py_DECREF(ps_obs); Py_DECREF(ps_msk); Py_DECREF(ps_str);
+    return result;
+}
+
 /* ─── Module boilerplate ─────────────────────────────────────────────────── */
 
 static PyMethodDef engine_methods[] = {
@@ -1005,6 +1411,19 @@ static PyMethodDef engine_methods[] = {
         "traverse", py_traverse, METH_VARARGS,
         "traverse(traverser,seed,n_players,heuristic_frac=0.4) "
         "-> (adv_obs,adv_masks,adv_targets,adv_actions,strat_obs,strat_masks,strat_strategies)"
+    },
+    {
+        "set_bid_adv_weights", py_set_bid_adv_weights, METH_VARARGS,
+        "set_bid_adv_weights(w1,b1,w2,b2,w3,b3) — load float32 bid advantage-net weights"
+    },
+    {
+        "set_play_adv_weights", py_set_play_adv_weights, METH_VARARGS,
+        "set_play_adv_weights(w1,b1,w2,b2,w3,b3) — load float32 play advantage-net weights"
+    },
+    {
+        "traverse_split", py_traverse_split, METH_VARARGS,
+        "traverse_split(traverser,seed,n_players,heuristic_frac=0.4) "
+        "-> 14-tuple of numpy arrays for split bid/play networks"
     },
     {NULL, NULL, 0, NULL}
 };
