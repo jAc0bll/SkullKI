@@ -27,6 +27,7 @@ if [ -d "$REPO_DIR/.git" ]; then
     echo "[1/6] Repo exists — pulling features branch..."
     git -C "$REPO_DIR" fetch origin
     git -C "$REPO_DIR" checkout -B features origin/features
+    git -C "$REPO_DIR" reset --hard origin/features
 else
     echo "[1/6] Cloning repo (features branch)..."
     git clone --branch features "$REPO_URL" "$REPO_DIR"
