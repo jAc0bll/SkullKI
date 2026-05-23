@@ -11,7 +11,7 @@
 # Buffer: 8M × 4 bufs × ~1.5 KB/sample ≈ 48 GB
 #   play buf fills in ~15 iters (550k/iter), bid buf in ~80 iters (100k/iter).
 #
-# Cost estimate: ~5000 iters × 16s ≈ 22h × $1/h = ~$22
+# Cost estimate: ~5000 iters × 19s ≈ 26h × $1/h = ~$26
 
 n_players: 4
 env_seed: 42
@@ -27,12 +27,12 @@ bid_hidden: [256, 256]
 play_hidden: [512, 512]
 
 adv_lr: 5.0e-4
-adv_batch_size: 16384           # 2x larger batch → better GPU utilization
-adv_train_steps: 500            # halved; AMP compensates with better throughput
+adv_batch_size: 8192            # keep small: CPU buffer sampling dominates per-step cost
+adv_train_steps: 500            # halved from 1000; AMP cuts GPU time ~2x on top
 adv_buffer_capacity: 8_000_000
 
 strat_lr: 5.0e-4
-strat_batch_size: 16384
+strat_batch_size: 8192
 strat_train_steps: 500
 strat_buffer_capacity: 8_000_000
 
