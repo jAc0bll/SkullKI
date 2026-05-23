@@ -520,6 +520,9 @@ def worker_task_split(args: tuple) -> tuple:
     return traverse_split(traverser, _BID_ADV_NET, _PLAY_ADV_NET, _UTIL_ENV, seed, n_players)
 
 
+_WORKER_TIMED = False   # print timing once per worker process
+
+
 def worker_batch_task_split(args_list: list) -> tuple:
     """Process a batch of traversals and return 14 concatenated arrays.
 
@@ -527,7 +530,10 @@ def worker_batch_task_split(args_list: list) -> tuple:
     O(n_batches × 14 arrays) — ~50× fewer pickle calls, eliminating the
     10-20s collect bottleneck when running 10k traversals.
     """
+    global _WORKER_TIMED
+    import time, sys, os
     _maybe_reload_weights_split()
+    t0 = time.time()
     results = []
     for traverser, seed, n_players in args_list:
         if _C_ENGINE is not None:
@@ -537,6 +543,13 @@ def worker_batch_task_split(args_list: list) -> tuple:
                 traverse_split(traverser, _BID_ADV_NET, _PLAY_ADV_NET,
                                _UTIL_ENV, seed, n_players)
             )
+    trav = time.time() - t0
+    if not _WORKER_TIMED:
+        backend = "C" if _C_ENGINE is not None else "Python"
+        ms = trav / len(args_list) * 1000
+        print(f"  [worker pid={os.getpid()}] {backend} {len(args_list)} trav "
+              f"in {trav:.2f}s = {ms:.1f}ms each", file=sys.stderr, flush=True)
+        _WORKER_TIMED = True
     return tuple(
         np.concatenate([r[i] for r in results], axis=0)
         for i in range(14)
