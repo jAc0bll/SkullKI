@@ -69,13 +69,8 @@ else:
     print("  WARNING: C engine NOT available — using slow Python traversal")
 PYEOF
 
-# ── 5. Tune worker count to this machine ──────────────────────────────────
-echo "[5/6] Tuning worker count..."
-NCORES=$(nproc --all)
-# Leave ~28 threads for OS / manager / GPU trainer
-WORKERS=$(( NCORES > 32 ? NCORES - 28 : NCORES - 4 ))
-echo "  Threads detected: $NCORES  ->  num_workers: $WORKERS"
-sed -i "s/^num_workers:.*/num_workers: $WORKERS/" "$CONFIG"
+# ── 5. Show config ────────────────────────────────────────────────────────
+echo "[5/6] Config (num_workers fixed at 100 for 64c/128t EPYC 7B13)..."
 cat "$CONFIG"
 
 # ── 6. Launch in tmux (fall back to screen if missing) ────────────────────
