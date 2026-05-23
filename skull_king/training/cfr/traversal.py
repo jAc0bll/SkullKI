@@ -69,11 +69,19 @@ def _compute_utility_from_engine(engine, player: int) -> float:
     return _utility_from_scores(scores, player)
 
 
+_WIN_BONUS = 0.5   # added to winner; split as -0.5/(n-1) among losers (zero-sum)
+
+
 def _utility_from_scores(scores: list[float], player: int) -> float:
     my_score = float(scores[player])
     n = len(scores)
     avg_others = sum(scores[i] for i in range(n) if i != player) / (n - 1)
-    return (my_score - avg_others) / (_UTILITY_SCALE_PER_PLAYER * n)
+    margin = (my_score - avg_others) / (_UTILITY_SCALE_PER_PLAYER * n)
+    # Explicit win bonus: rewards being #1, not just above average.
+    # Zero-sum: winner gets +_WIN_BONUS, each loser pays _WIN_BONUS/(n-1).
+    is_winner = my_score >= max(scores)
+    win_bonus = _WIN_BONUS if is_winner else -_WIN_BONUS / (n - 1)
+    return margin + win_bonus
 
 
 def _decode_action(
