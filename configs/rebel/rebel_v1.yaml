@@ -12,7 +12,7 @@ seed: 42
 
 # Training loop
 n_iterations: 1000
-games_per_iter: 100           # ~100 parallel CPU workers on the EPYC 9754 (122 cores)
+games_per_iter: 80            # ~80 parallel CPU workers on the EPYC 9754 (122 cores)
 
 # Subgame solver
 n_subgame_samples: 1          # unused in PBS-CFR (kept for API compat)
