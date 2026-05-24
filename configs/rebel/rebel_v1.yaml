@@ -17,6 +17,7 @@ games_per_iter: 4
 # Subgame solver
 n_subgame_samples: 1          # unused in PBS-CFR (kept for API compat)
 n_cfr_iters_per_subgame: 5    # CFR iters per decision node — start low, tune up
+max_depth: 8                  # max tree depth (4 players × 2 tricks)
 
 # Networks (larger than CFR nets — PBS encoding includes belief)
 value_hidden: [512, 512, 256]

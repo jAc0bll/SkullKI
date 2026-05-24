@@ -81,6 +81,7 @@ class RebelTrainer:
             value_net=self.value_net,
             device=self.device,
             n_cfr_iters=cfg.n_cfr_iters_per_subgame,
+            max_depth=cfg.max_depth,
             n_samples=cfg.n_subgame_samples,
         )
 

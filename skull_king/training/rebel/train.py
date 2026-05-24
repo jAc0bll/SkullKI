@@ -26,6 +26,7 @@ class RebelConfig:
     # Subgame solver
     n_subgame_samples: int = 16       # K determinizations per decision node
     n_cfr_iters_per_subgame: int = 50  # CFR iters within each determinization
+    max_depth: int = 8                 # max tree depth per subgame (None = full round)
 
     # Networks
     value_hidden: list = field(default_factory=lambda: [512, 512, 256])
