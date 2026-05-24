@@ -16,7 +16,7 @@ from skull_king.engine import GameEngine
 from skull_king.env.skull_king_env import ACTION_SPACE_SIZE
 from skull_king.game_state import GamePhase
 from skull_king.training.cfr.traversal import _utility_from_scores
-from skull_king.training.rebel.public_belief_state import PublicBeliefState
+from skull_king.training.rebel.public_belief_state import encode_pbs_batch, pbs_encoding_size
 from skull_king.training.rebel.subgame import _action_to_card, _build_action_mask
 
 if TYPE_CHECKING:
@@ -47,6 +47,14 @@ class VectorizedRunner:
         self.device = device
         self._rng = np.random.default_rng(seed)
         self._init_envs()
+
+        # Pre-allocated numpy buffers — reused every step, avoids GC pressure
+        pbs_size = pbs_encoding_size(n_players)
+        self._enc_buf  = np.empty((n_envs, pbs_size), dtype=np.float32)
+        self._mask_buf = np.empty((n_envs, ACTION_SPACE_SIZE), dtype=bool)
+        # Pre-allocated GPU tensors — avoids repeated from_numpy + .to(device)
+        self._enc_t  = torch.empty((n_envs, pbs_size), dtype=torch.float32, device=device)
+        self._mask_t = torch.empty((n_envs, ACTION_SPACE_SIZE), dtype=torch.bool, device=device)
 
     def _init_envs(self) -> None:
         seeds = self._rng.integers(0, 2**31, size=self.n_envs)
@@ -79,56 +87,70 @@ class VectorizedRunner:
                     self._flush(i, rl_buf)
                     self._restart(i)
 
-            # ── build batch of all pending decisions ─────────────────
+            # ── gather active engines ────────────────────────────────
             active_idx: list[int] = []
-            encs: list[np.ndarray] = []
-            masks: list[np.ndarray] = []
+            active_eng: list = []
             players: list[int] = []
 
             for i, eng in enumerate(self.engines):
-                if eng._phase == GamePhase.GAME_OVER:
-                    continue
-                player = eng._current_player_index()
-                pbs = PublicBeliefState.from_engine(eng, player)
-                enc = pbs.encode()
-                mask = _bid_mask(eng) if eng._phase == GamePhase.BIDDING else _build_action_mask(eng)
-                active_idx.append(i)
-                encs.append(enc)
-                masks.append(mask)
-                players.append(player)
+                if eng._phase != GamePhase.GAME_OVER:
+                    player = eng._current_player_index()
+                    active_idx.append(i)
+                    active_eng.append(eng)
+                    players.append(player)
 
             if not active_idx:
                 break
 
-            # ── batched GPU inference ────────────────────────────────
-            enc_t = torch.from_numpy(np.stack(encs)).float().to(self.device)
-            mask_t = torch.from_numpy(np.stack(masks)).bool().to(self.device)
+            N = len(active_idx)
+
+            # ── batch-encode PBS (no per-engine object creation) ─────
+            enc_np  = self._enc_buf[:N]
+            mask_np = self._mask_buf[:N]
+            encode_pbs_batch(active_eng, players, out=enc_np)
+            for j, eng in enumerate(active_eng):
+                mask_np[j] = (
+                    _bid_mask(eng)
+                    if eng._phase == GamePhase.BIDDING
+                    else _build_action_mask(eng)
+                )
+
+            # ── batched GPU inference (reuse pre-allocated tensors) ──
+            self._enc_t[:N].copy_(torch.from_numpy(enc_np))
+            self._mask_t[:N].copy_(torch.from_numpy(mask_np))
+            enc_t  = self._enc_t[:N]
+            mask_t = self._mask_t[:N]
 
             with torch.no_grad():
                 q_vals = q_net(enc_t, mask_t).cpu().numpy()
                 avg_lp = avg_net(enc_t, mask_t).cpu().numpy()
 
-            use_br = self._rng.random(len(active_idx)) < cfg.eta
+            use_br = self._rng.random(N) < cfg.eta
 
             # ── select and apply actions ─────────────────────────────
+            br_encs:    list[np.ndarray] = []
+            br_masks:   list[np.ndarray] = []
+            br_actions: list[int]        = []
+
             for j, i in enumerate(active_idx):
-                eng = self.engines[i]
-                enc = encs[j]
-                mask = masks[j]
+                eng    = self.engines[i]
+                enc    = enc_np[j].copy()   # own copy for buffer storage
+                mask   = mask_np[j].copy()
                 player = players[j]
-                legal = np.where(mask)[0]
+                legal  = np.where(mask)[0]
 
                 if use_br[j]:
-                    if self._rng.random() < cfg.epsilon:
-                        action = int(self._rng.choice(legal))
-                    else:
-                        action = int(np.argmax(q_vals[j]))
-                    sl_buf.add_batch(
-                        enc[None], mask[None], np.array([action], dtype=np.int64)
+                    action = (
+                        int(self._rng.choice(legal))
+                        if self._rng.random() < cfg.epsilon
+                        else int(np.argmax(q_vals[j]))
                     )
+                    br_encs.append(enc)
+                    br_masks.append(mask)
+                    br_actions.append(action)
                 else:
                     probs = np.exp(avg_lp[j])
-                    probs = np.maximum(probs, 0.0)
+                    np.maximum(probs, 0.0, out=probs)
                     probs[~mask] = 0.0
                     s = probs.sum()
                     probs = probs / s if s > 1e-9 else mask.astype(np.float64) / mask.sum()
@@ -145,11 +167,18 @@ class VectorizedRunner:
                         card, tm = _action_to_card(action, eng)
                         eng.play_card_no_state(player, card, tm)
                 except Exception:
-                    # Invalid action (shouldn't happen with correct mask) — restart
                     self._pending[i].pop()
                     self._restart(i)
 
-            total += len(active_idx)
+            # Batch-push BR transitions to SL buffer
+            if br_encs:
+                sl_buf.add_batch(
+                    np.stack(br_encs),
+                    np.stack(br_masks),
+                    np.array(br_actions, dtype=np.int64),
+                )
+
+            total += N
 
         return total
 
