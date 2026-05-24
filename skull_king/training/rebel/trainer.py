@@ -314,7 +314,8 @@ class RebelTrainer:
     def _evaluate(self, t: int) -> None:
         from skull_king.training.rebel.agent import RebelAgent
         n = self.cfg.n_players
-        agent = RebelAgent(self.policy_net, n_players=n, name="ReBeL")
+        agent = RebelAgent(self.policy_net, n_players=n, name="ReBeL",
+                           value_net=self.value_net)
         runner = TournamentRunner(seed=999)
         r_r = runner.run([agent] + [RandomAgent(i) for i in range(n - 1)], n_games=200)
         r_h = runner.run([agent] + [HeuristicAgent() for _ in range(n - 1)], n_games=200)
