@@ -34,8 +34,8 @@ buffer_capacity: 500_000
 eval_every: 50
 checkpoint_every: 100
 model_dir: models/rebel
-run_name: rebel_v1_4090
+run_name: rebel_v2_6000
 
-# Resume from best checkpoint
-resume_from: models/rebel/rebel_v1_4090_iter100
-start_iter: 101
+# Fresh start
+resume_from: ""
+start_iter: 1
