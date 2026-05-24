@@ -126,6 +126,7 @@ class RebelTrainer:
 
         self._scaler = torch.amp.GradScaler("cuda", enabled=(self.device.type == "cuda"))
         self._rng = np.random.default_rng(cfg.seed)
+        self._last_val_loss = float("inf")
 
         os.makedirs(cfg.model_dir, exist_ok=True)
 
@@ -182,6 +183,7 @@ class RebelTrainer:
                 t1 = time.time()
                 val_loss = self._train_value()
                 pol_loss = self._train_policy()
+                self._last_val_loss = val_loss
                 t_train = time.time() - t1
 
                 elapsed = time.time() - t0
@@ -314,8 +316,11 @@ class RebelTrainer:
     def _evaluate(self, t: int) -> None:
         from skull_king.training.rebel.agent import RebelAgent
         n = self.cfg.n_players
+        # Use value-greedy only once val_loss is reliable enough; policy-greedy otherwise
+        use_value = self._last_val_loss < 0.10
         agent = RebelAgent(self.policy_net, n_players=n, name="ReBeL",
-                           value_net=self.value_net)
+                           value_net=self.value_net if use_value else None)
+        mode = "value-greedy" if use_value else "policy-greedy"
         runner = TournamentRunner(seed=999)
         r_r = runner.run([agent] + [RandomAgent(i) for i in range(n - 1)], n_games=200)
         r_h = runner.run([agent] + [HeuristicAgent() for _ in range(n - 1)], n_games=200)
@@ -324,7 +329,7 @@ class RebelTrainer:
         avg_r = r_r.avg_scores().get("ReBeL", 0.0)
         avg_h = r_h.avg_scores().get("ReBeL", 0.0)
         print(
-            f"  [EVAL iter={t}]"
+            f"  [EVAL iter={t} {mode}]"
             f"  vs_random={wr_r:.1%} ({avg_r:+.0f})"
             f"  vs_heuristic={wr_h:.1%} ({avg_h:+.0f})",
             flush=True,
