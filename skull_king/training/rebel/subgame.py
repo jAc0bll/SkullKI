@@ -270,7 +270,7 @@ class _PBSCFRTree:
             bids_arr[i] = engine._players[i].bid / NUM_ROUNDS
 
         tricks_won = np.array(
-            [p.tricks_won for p in engine._players], dtype=np.float32
+            [p.tricks_won_this_round for p in engine._players], dtype=np.float32
         ) / max(engine._round, 1)
 
         total_scores = np.clip(
