@@ -1,0 +1,38 @@
+# ReBeL training config — RTX 4090 (or 2x RTX PRO 6000 S)
+# Run:  python -m skull_king.training.rebel.train --config cfr_config_rebel_4090.yaml
+#
+# ReBeL uses determinized CFR with a value network at leaf nodes.
+# Each decision node: sample 16 opponent hand assignments, run 50 CFR iters each,
+# average strategies → strong move selection + training signal.
+#
+# Timing estimate (4090):
+#   ~20 games/iter × ~50 decisions/game × 16 samples × 50 CFR iters ≈ slow
+#   Start with n_subgame_samples=4 and n_cfr_iters_per_subgame=20 to test speed.
+
+n_players: 4
+seed: 42
+
+# Training loop
+n_iterations: 500
+games_per_iter: 20
+
+# Subgame solver — reduce these first if too slow
+n_subgame_samples: 8
+n_cfr_iters_per_subgame: 30
+
+# Networks (larger than CFR nets — PBS encoding includes belief)
+value_hidden: [512, 512, 256]
+policy_hidden: [512, 512, 256]
+
+# Optimization
+value_lr: 1.0e-3
+policy_lr: 1.0e-3
+batch_size: 512
+train_steps: 100
+buffer_capacity: 200_000
+
+# Logging
+eval_every: 50
+checkpoint_every: 100
+model_dir: models/rebel
+run_name: rebel_v1_4090
