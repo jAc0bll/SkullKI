@@ -5,14 +5,7 @@ import numpy as np
 import torch
 
 from skull_king.agents.base_agent import BaseAgent
-from skull_king.env.skull_king_env import (
-    ACTION_SPACE_SIZE,
-    N_BID_ACTIONS,
-    TIGRESS_AS_ESCAPE_ACTION,
-    TIGRESS_AS_PIRATE_ACTION,
-    _build_obs,
-    _build_action_mask,
-)
+from skull_king.env.skull_king_env import ACTION_SPACE_SIZE
 
 
 class RebelAgent(BaseAgent):
