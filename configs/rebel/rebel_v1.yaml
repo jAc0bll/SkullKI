@@ -1,24 +1,22 @@
-# ReBeL training config — RTX 4090 (or 2x RTX PRO 6000 S)
-# Run:  python -m skull_king.training.rebel.train --config cfr_config_rebel_4090.yaml
+# ReBeL training config — 2x RTX PRO 6000 S Blackwell + EPYC 9754
+# Run:  python -m skull_king.training.rebel.train --config configs/rebel/rebel_v1.yaml
 #
-# ReBeL uses determinized CFR with a value network at leaf nodes.
-# Each decision node: sample 16 opponent hand assignments, run 50 CFR iters each,
-# average strategies → strong move selection + training signal.
+# PBS-CFR: single belief-weighted tree per decision, no determinization.
+# Subgame depth = current round. Value net at round boundaries.
 #
-# Timing estimate (4090):
-#   ~20 games/iter × ~50 decisions/game × 16 samples × 50 CFR iters ≈ slow
-#   Start with n_subgame_samples=4 and n_cfr_iters_per_subgame=20 to test speed.
+# Timing highly dependent on n_cfr_iters_per_subgame and games_per_iter.
+# Benchmark first iter to calibrate.
 
 n_players: 4
 seed: 42
 
 # Training loop
-n_iterations: 500
-games_per_iter: 20
+n_iterations: 1000
+games_per_iter: 4
 
-# Subgame solver — reduce these first if too slow
-n_subgame_samples: 8
-n_cfr_iters_per_subgame: 30
+# Subgame solver
+n_subgame_samples: 1          # unused in PBS-CFR (kept for API compat)
+n_cfr_iters_per_subgame: 5    # CFR iters per decision node — start low, tune up
 
 # Networks (larger than CFR nets — PBS encoding includes belief)
 value_hidden: [512, 512, 256]
