@@ -109,7 +109,7 @@ class PublicBeliefState:
         for i in engine._bids_placed:
             bids[i] = engine._players[i].bid
 
-        tricks_won = np.array([p.tricks_won for p in engine._players], dtype=np.int32)
+        tricks_won = np.array([p.tricks_won_this_round for p in engine._players], dtype=np.int32)
         total_scores = np.array([p.total_score for p in engine._players], dtype=np.float32)
         bid_revealed = np.array([i in engine._bids_placed for i in range(n)], dtype=bool)
 
