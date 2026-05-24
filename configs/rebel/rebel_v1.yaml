@@ -11,13 +11,13 @@ n_players: 4
 seed: 42
 
 # Training loop
-n_iterations: 1000
-games_per_iter: 4
+n_iterations: 2000
+games_per_iter: 2
 
 # Subgame solver
 n_subgame_samples: 1          # unused in PBS-CFR (kept for API compat)
-n_cfr_iters_per_subgame: 5    # CFR iters per decision node — start low, tune up
-max_depth: 8                  # max tree depth (4 players × 2 tricks)
+n_cfr_iters_per_subgame: 2    # CFR iters per decision node
+max_depth: 4                  # max tree depth (~1 trick lookahead)
 
 # Networks (larger than CFR nets — PBS encoding includes belief)
 value_hidden: [512, 512, 256]

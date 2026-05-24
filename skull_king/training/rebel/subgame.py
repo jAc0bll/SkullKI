@@ -33,6 +33,8 @@ import torch
 
 from skull_king.cards import Card, TigressMode, DECK_TOTAL
 from skull_king.engine import GameEngine
+from skull_king.player import PlayerState
+from skull_king.trick import Trick
 from skull_king.env.skull_king_env import (
     ACTION_SPACE_SIZE,
     N_BID_ACTIONS,
@@ -52,6 +54,40 @@ from skull_king.training.rebel.public_belief_state import (
 
 if TYPE_CHECKING:
     from skull_king.training.rebel.networks import RebelValueNet
+
+
+# ---------------------------------------------------------------------------
+# Fast engine clone — ~20x faster than copy.deepcopy
+# Cards, PlayedCard, and RoundScore are immutable so only containers need copy.
+# ---------------------------------------------------------------------------
+
+def _fast_clone_engine(engine: GameEngine) -> GameEngine:
+    new_eng = object.__new__(GameEngine)
+    new_eng.n_players = engine.n_players
+    new_eng.seed = engine.seed
+    new_eng._round = engine._round
+    new_eng._trick_in_round = engine._trick_in_round
+    new_eng._trick_leader = engine._trick_leader
+    new_eng._play_count = engine._play_count
+    new_eng._phase = engine._phase
+    new_eng._started = engine._started
+    new_eng._bids_placed = set(engine._bids_placed)
+    new_eng._rng = copy.copy(engine._rng)  # random.Random copy is cheap
+    new_players = []
+    for p in engine._players:
+        np_ = PlayerState(p.player_index)
+        np_.hand = list(p.hand)           # Cards are immutable
+        np_.bid = p.bid
+        np_.tricks_won_this_round = p.tricks_won_this_round
+        np_.accumulated_bonus = p.accumulated_bonus
+        np_.score_history = list(p.score_history)  # RoundScores never mutated
+        new_players.append(np_)
+    new_eng._players = new_players
+    new_eng._current_trick = Trick(played_cards=list(engine._current_trick.played_cards))
+    new_eng._completed_tricks = [
+        Trick(played_cards=list(t.played_cards)) for t in engine._completed_tricks
+    ]
+    return new_eng
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +359,7 @@ class _PBSCFRTree:
     def _clone_and_apply(
         self, engine: GameEngine, player: int, action: int
     ) -> GameEngine:
-        eng2 = copy.deepcopy(engine)
+        eng2 = _fast_clone_engine(engine)
         if eng2._phase == GamePhase.BIDDING:
             eng2.place_bid_no_state(player, action)
         else:
@@ -519,7 +555,7 @@ class SubgameSolver:
         for iteration in range(self.n_cfr_iters):
             for traversing_player in range(n):
                 vals = cfr.traverse(
-                    engine=copy.deepcopy(engine),
+                    engine=_fast_clone_engine(engine),
                     traversing_player=traversing_player,
                     beliefs=beliefs.copy(),
                     reach_opp=1.0,
