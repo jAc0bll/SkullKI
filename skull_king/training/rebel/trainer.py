@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import os
+import resource
 import time
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING
@@ -51,7 +52,8 @@ def _play_one_game_worker(args: tuple) -> tuple:
     value_net = None
     if state_dict is not None:
         value_net = RebelValueNet(n_players, hidden=tuple(value_hidden))
-        value_net.load_state_dict(state_dict)
+        # numpy arrays were passed to avoid multiprocessing resource_sharer fd issues
+        value_net.load_state_dict({k: torch.from_numpy(v) for k, v in state_dict.items()})
         value_net.eval()
 
     solver = SubgameSolver(
@@ -127,6 +129,13 @@ class RebelTrainer:
 
         os.makedirs(cfg.model_dir, exist_ok=True)
 
+        # Raise fd limit — 80 spawn workers need ~10 fds each, default 1024 is too low
+        try:
+            _soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+            resource.setrlimit(resource.RLIMIT_NOFILE, (min(65536, _hard), _hard))
+        except Exception:
+            pass
+
         # Persistent worker pool — spawn avoids CUDA fork issues
         n_workers = min(cfg.games_per_iter, max(1, mp.cpu_count() - 2))
         self._n_workers = n_workers
@@ -197,8 +206,8 @@ class RebelTrainer:
     def _self_play(self) -> tuple[int, int]:
         cfg = self.cfg
 
-        # Serialize value_net weights to CPU for workers (small MLP, ~3 MB)
-        state_dict = {k: v.cpu() for k, v in self.value_net.state_dict().items()}
+        # Serialize as numpy — avoids multiprocessing resource_sharer fd leak
+        state_dict = {k: v.cpu().numpy() for k, v in self.value_net.state_dict().items()}
 
         args = [
             (int(self._rng.integers(0, 2**31)), cfg.n_players,
