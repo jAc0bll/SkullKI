@@ -16,7 +16,7 @@ games_per_iter: 80            # ~80 parallel CPU workers on the EPYC 9754 (122 c
 
 # Subgame solver
 n_subgame_samples: 1          # unused in PBS-CFR (kept for API compat)
-n_cfr_iters_per_subgame: 5    # CFR iters per decision node — halves CFR time, still useful
+n_cfr_iters_per_subgame: 10   # CFR iters per decision node — enough to converge
 max_depth: 4                  # max tree depth (~1 trick lookahead)
 
 # Networks (larger than CFR nets — PBS encoding includes belief)
