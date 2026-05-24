@@ -1,0 +1,43 @@
+# NFSP config — 2x RTX PRO 6000 S Blackwell + EPYC 9754
+# Run: python -m skull_king.training.nfsp.train --config configs/nfsp/nfsp_v1.yaml
+#
+# Fully GPU-batched: n_envs games run in parallel in the main process.
+# No subprocesses — all inference is batched on GPU.
+
+n_players: 4
+seed: 42
+
+# Collection
+n_iterations: 2000
+collect_steps: 16384     # decisions per iter (~1 batch of 512-env games)
+n_envs: 512              # parallel game environments
+
+# NFSP
+eta: 0.1                 # 10% BR, 90% average strategy
+epsilon_start: 0.06
+epsilon_end: 0.001
+epsilon_decay: 1000
+
+# Networks
+hidden: [512, 512, 256]
+
+# Q-net (best response)
+rl_lr: 1.0e-3
+rl_batch_size: 4096
+rl_train_steps: 300
+rl_buffer_capacity: 1_000_000
+
+# Avg-net (average strategy)
+sl_lr: 1.0e-3
+sl_batch_size: 4096
+sl_train_steps: 300
+sl_buffer_capacity: 2_000_000
+
+# Logging
+eval_every: 50
+checkpoint_every: 200
+model_dir: models/nfsp
+run_name: nfsp_v1_6000
+
+resume_from: ""
+start_iter: 1
