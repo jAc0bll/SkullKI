@@ -12,11 +12,11 @@ seed: 42
 
 # Training loop
 n_iterations: 1000
-games_per_iter: 60            # ~60 parallel CPU workers on the EPYC 9754
+games_per_iter: 100           # ~100 parallel CPU workers on the EPYC 9754 (122 cores)
 
 # Subgame solver
 n_subgame_samples: 1          # unused in PBS-CFR (kept for API compat)
-n_cfr_iters_per_subgame: 10   # CFR iters per decision node — enough to converge
+n_cfr_iters_per_subgame: 5    # CFR iters per decision node — halves CFR time, still useful
 max_depth: 4                  # max tree depth (~1 trick lookahead)
 
 # Networks (larger than CFR nets — PBS encoding includes belief)
@@ -27,7 +27,7 @@ policy_hidden: [512, 512, 256]
 value_lr: 1.0e-3
 policy_lr: 3.0e-4
 batch_size: 4096
-train_steps: 200
+train_steps: 400
 buffer_capacity: 500_000
 
 # Logging
