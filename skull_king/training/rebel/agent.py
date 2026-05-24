@@ -72,9 +72,14 @@ class RebelAgent(BaseAgent):
         return self._policy_greedy(player_index, mask, legal)
 
     def _value_greedy(self, player_index: int, legal: np.ndarray) -> int:
-        """Pick the action with the highest predicted value for player_index."""
+        """Pick the action with the highest predicted value for player_index.
+
+        Always encode PBS from player_index's perspective — consistent with
+        how the value buffer was built during self-play.
+        """
         from skull_king.training.rebel.subgame import _action_to_card, _fast_clone_engine
         from skull_king.training.rebel.public_belief_state import PublicBeliefState
+        from skull_king.training.cfr.traversal import _utility_from_scores
         from skull_king.game_state import GamePhase
 
         best_val = float("-inf")
@@ -91,12 +96,15 @@ class RebelAgent(BaseAgent):
             except Exception:
                 continue
 
-            acting_next = eng2._current_player_index() if eng2._phase != GamePhase.GAME_OVER else player_index
-            pbs = PublicBeliefState.from_engine(eng2, acting_next)
-            enc = torch.from_numpy(pbs.encode()).float().unsqueeze(0).to(self.device)
-
-            with torch.no_grad():
-                val = self.value_net(enc)[0, player_index].item()
+            if eng2._phase == GamePhase.GAME_OVER:
+                scores = [p.total_score for p in eng2._players]
+                val = _utility_from_scores(scores, player_index)
+            else:
+                # Always encode from player_index's perspective (matches training distribution)
+                pbs = PublicBeliefState.from_engine(eng2, player_index)
+                enc = torch.from_numpy(pbs.encode()).float().unsqueeze(0).to(self.device)
+                with torch.no_grad():
+                    val = self.value_net(enc)[0, player_index].item()
 
             if val > best_val:
                 best_val = val
