@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Vast.ai setup + training launcher for Skull King CFR v7 (split nets, 4090)
+# Vast.ai setup + training launcher for Skull King CFR v8 (split nets, 4090)
 # AMD EPYC 7B13 (64c/128t) + RTX 4090 24GB
+# v8 changes: win-bonus in utility (+0.5 to winner), heuristic_frac 0.6 (harder opponents)
 #
-# Usage:  curl -fsSL https://raw.githubusercontent.com/jAc0bll/SkullKI/features/setup_vast_4090.sh | bash
+# Usage:  curl -fsSL https://raw.githubusercontent.com/jAc0bll/SkullKI/features/scripts/setup_vast_v8_4090.sh | bash
 
 set -euo pipefail
 
@@ -15,11 +16,11 @@ else
 fi
 VENV="$REPO_DIR/venv"
 PY=""  # set after venv detection in step 2
-CONFIG="$REPO_DIR/cfr_config_v7_4090.yaml"
-LOG="$REPO_DIR/training_v7_4090.log"
-SESSION="cfr_v7"
+CONFIG="$REPO_DIR/configs/cfr/v8_4090.yaml"
+LOG="$REPO_DIR/training_v8_4090.log"
+SESSION="cfr_v8"
 
-echo "=== Skull King CFR v7 — Vast.ai RTX 4090 Setup ==="
+echo "=== Skull King CFR v8 — Vast.ai RTX 4090 Setup ==="
 echo "    Repo dir: $REPO_DIR"
 
 # ── 1. Clone or update repo ────────────────────────────────────────────────
@@ -33,7 +34,7 @@ else
     git clone --branch features "$REPO_URL" "$REPO_DIR"
 fi
 echo "      Config files found:"
-ls "$REPO_DIR"/*.yaml
+ls "$REPO_DIR"/configs/cfr/*.yaml "$REPO_DIR"/configs/rebel/*.yaml 2>/dev/null || true
 
 # ── 2. Venv + dependencies ────────────────────────────────────────────────
 echo "[2/6] Setting up venv..."

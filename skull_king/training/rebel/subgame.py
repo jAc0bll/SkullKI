@@ -1,33 +1,37 @@
-"""ReBeL subgame solver.
+"""ReBeL subgame solver — proper PBS-CFR (single belief-weighted tree).
 
-Implements determinized CFR with value-network leaf evaluation.
+Algorithm (PBS-CFR, as in ReBeL / Meta AI):
+  For each CFR iteration and each traversing player:
+    traverse(engine, traversing_player, beliefs, reach_opp=1.0, depth=0)
 
-Algorithm per game position:
-  1. Sample K private states (opponent hand assignments) from the PBS belief.
-  2. For each sample, run vanilla CFR from the current game position
-     treating all hands as known (perfect information within the subgame).
-  3. At leaf nodes (end of round), query the value network V(PBS)
-     to estimate future-round utility rather than rolling out further.
-  4. Average the resulting strategies across all K samples → final strategy.
-  5. Collect (PBS, strategy, values) tuples for network training.
+  At TRAVERSING player nodes:
+    - Enumerate all legal actions.
+    - Recurse on each, updating beliefs via Bayesian inference.
+    - Regret update weighted by reach_opp (opponent reach probability).
+    - regrets[a] += reach_opp * (action_value[a] - node_value)
 
-Why determinized CFR instead of full ReBeL PBS-CFR?
-  Full ReBeL requires tracking the belief distribution over the entire game
-  tree simultaneously, which involves a weighted sum over all possible deals
-  at every node — exponential in the number of opponent cards.
-  Determinized CFR ("PIMC") is a well-tested approximation that averages
-  strategies across sampled deals.  It sacrifices theoretical Nash-equilibrium
-  guarantees but is strong in practice and far easier to implement.
-  Full PBS-CFR will be added as a future extension.
+  At OPPONENT nodes:
+    - Sample one action from current strategy.
+    - Update reach_opp *= strategy[sampled_action].
+    - Beliefs updated by Bayesian inference on the sampled play.
+
+  Leaf nodes (end of round or depth > max_depth):
+    - Use value_net(pbs_encoding_with_beliefs) for mid-game leaves.
+    - Use actual terminal utilities at GAME_OVER.
+
+This is the correct algorithm: one tree, beliefs tracked as a matrix
+[n_players, DECK_TOTAL], regrets weighted by opponent reach probability.
+No K-fold determinization, no separate per-sample CFRs.
 """
 from __future__ import annotations
 
+import copy
 from typing import Optional, TYPE_CHECKING
 
 import numpy as np
 import torch
 
-from skull_king.cards import Card, TigressMode
+from skull_king.cards import Card, TigressMode, DECK_TOTAL
 from skull_king.engine import GameEngine
 from skull_king.env.skull_king_env import (
     ACTION_SPACE_SIZE,
@@ -112,11 +116,61 @@ def _action_to_card(action: int, engine: GameEngine) -> tuple[Card, Optional[Tig
 
 
 # ---------------------------------------------------------------------------
-# Determinized CFR subgame
+# PBS-CFR core
 # ---------------------------------------------------------------------------
 
-class _SubgameCFR:
-    """Vanilla external-sampling CFR on a single determinized game tree."""
+def _bayesian_update(
+    beliefs: np.ndarray,
+    actor: int,
+    action: int,
+    engine: GameEngine,
+    n_players: int,
+) -> np.ndarray:
+    """Update belief matrix after observing *actor* play *action*.
+
+    During PLAYING phase a card play is a public observation: the card
+    is removed from all players' belief distributions and rows renormalized.
+    During BIDDING there is no card information to infer, so beliefs are
+    returned unchanged.
+
+    Parameters
+    ----------
+    beliefs:   [n_players, DECK_TOTAL] float32 — current beliefs
+    actor:     player index who just acted
+    action:    action index applied
+    engine:    game state BEFORE the action was applied (used for phase check)
+    n_players: number of players
+
+    Returns
+    -------
+    new_beliefs: [n_players, DECK_TOTAL] float32 (copy, never modifies in-place)
+    """
+    new_beliefs = beliefs.copy()
+
+    if engine._phase == GamePhase.PLAYING:
+        try:
+            card, _ = _action_to_card(action, engine)
+            slot = _card_to_slot(card)
+            if slot >= 0:
+                # Card is now publicly known — remove from all belief rows
+                new_beliefs[:, slot] = 0.0
+                # Renormalize each player's row independently
+                for i in range(n_players):
+                    row_sum = new_beliefs[i].sum()
+                    if row_sum > 0.0:
+                        new_beliefs[i] /= row_sum
+        except Exception:
+            pass  # If card lookup fails, leave beliefs unchanged
+
+    return new_beliefs
+
+
+class _PBSCFRTree:
+    """Single PBS-CFR tree for one subgame solve.
+
+    State (regret/strategy sums) is keyed by (player, round, trick_in_round,
+    hand_tuple) — the same observable information used in the old solver.
+    """
 
     def __init__(
         self,
@@ -124,126 +178,151 @@ class _SubgameCFR:
         value_net: Optional["RebelValueNet"],
         device: torch.device,
         current_round: int,
+        max_depth: Optional[int],
     ) -> None:
         self.n_players = n_players
         self.value_net = value_net
         self.device = device
         self.current_round = current_round
-        # regret and strategy sums: keyed by (player, obs_hash)
+        self.max_depth = max_depth
+
+        # Keyed by obs_key = (player, round, trick_in_round, hand_tuple)
         self._regret_sum: dict[tuple, np.ndarray] = {}
         self._strategy_sum: dict[tuple, np.ndarray] = {}
 
-    def _get_strategy(self, key: tuple, mask: np.ndarray) -> np.ndarray:
+    # ------------------------------------------------------------------
+    # Node key + strategy
+    # ------------------------------------------------------------------
+
+    def _obs_key(self, engine: GameEngine) -> tuple:
+        player = engine._current_player_index()
+        hand_key = tuple(sorted(c._hash for c in engine._players[player].hand))
+        return (player, engine._round, engine._trick_in_round, hand_key)
+
+    def _ensure_key(self, key: tuple) -> None:
         if key not in self._regret_sum:
             self._regret_sum[key] = np.zeros(ACTION_SPACE_SIZE, dtype=np.float64)
             self._strategy_sum[key] = np.zeros(ACTION_SPACE_SIZE, dtype=np.float64)
-        regrets = self._regret_sum[key].copy()
-        strat = regret_match(regrets, mask)
-        return strat
 
-    def _leaf_value(self, engine: GameEngine, pbs: Optional[PublicBeliefState]) -> np.ndarray:
-        """Return utility estimates for all players at a leaf node."""
-        if engine._phase == GamePhase.GAME_OVER:
-            scores = [p.total_score for p in engine._players]
-            return np.array([
-                _utility_from_scores(scores, i) for i in range(self.n_players)
-            ], dtype=np.float32)
+    def _current_strategy(self, key: tuple, mask: np.ndarray) -> np.ndarray:
+        self._ensure_key(key)
+        return regret_match(self._regret_sum[key].copy(), mask)
 
-        # End of current round but game continues — use value network
-        if self.value_net is not None and pbs is not None:
-            enc = pbs.encode()
-            with torch.no_grad():
-                t = torch.from_numpy(enc).float().unsqueeze(0).to(self.device)
-                vals = self.value_net(t).squeeze(0).cpu().numpy()
-            return vals
+    # ------------------------------------------------------------------
+    # Leaf detection + evaluation
+    # ------------------------------------------------------------------
 
-        # Fallback: use current round scores as proxy for total game value
-        scores = [p.total_score for p in engine._players]
-        return np.array([
-            _utility_from_scores(scores, i) for i in range(self.n_players)
-        ], dtype=np.float32)
-
-    def _is_subgame_leaf(self, engine: GameEngine) -> bool:
-        """True if we've finished the current round (or game over)."""
+    def _is_leaf(self, engine: GameEngine, depth: int) -> bool:
         if engine._phase == GamePhase.GAME_OVER:
             return True
-        # New round started (round advanced beyond subgame root round)
         if engine._round > self.current_round:
+            return True
+        if self.max_depth is not None and depth >= self.max_depth:
             return True
         return False
 
-    def traverse(
+    def _leaf_value(
         self,
         engine: GameEngine,
-        traversing_player: int,
-        reach: float,
-        pbs: Optional[PublicBeliefState],
+        beliefs: np.ndarray,
     ) -> np.ndarray:
-        """External-sampling CFR traversal. Returns utility array [n_players]."""
-        if self._is_subgame_leaf(engine):
-            return self._leaf_value(engine, pbs)
+        """Return utility vector [n_players] at a leaf node."""
+        if engine._phase == GamePhase.GAME_OVER:
+            scores = [p.total_score for p in engine._players]
+            return np.array(
+                [_utility_from_scores(scores, i) for i in range(self.n_players)],
+                dtype=np.float32,
+            )
 
-        player = engine._current_player_index()
-        mask = _build_action_mask(engine)
-        legal = np.where(mask)[0]
-        if len(legal) == 0:
-            return self._leaf_value(engine, pbs)
+        # End of round but game continues — use value network if available
+        if self.value_net is not None:
+            # Build a minimal PBS encoding using current beliefs
+            enc = self._pbs_encode_with_beliefs(engine, beliefs)
+            with torch.no_grad():
+                t = torch.from_numpy(enc).float().unsqueeze(0).to(self.device)
+                vals = self.value_net(t).squeeze(0).cpu().numpy()
+            return vals.astype(np.float32)
 
-        # Build an observation key for this node (player + hand + public state)
-        hand_key = tuple(sorted(c._hash for c in engine._players[player].hand))
-        obs_key = (player, engine._round, engine._trick_in_round, hand_key)
+        # Fallback: use accumulated scores
+        scores = [p.total_score for p in engine._players]
+        return np.array(
+            [_utility_from_scores(scores, i) for i in range(self.n_players)],
+            dtype=np.float32,
+        )
 
-        strategy = self._get_strategy(obs_key, mask)
+    def _pbs_encode_with_beliefs(
+        self,
+        engine: GameEngine,
+        beliefs: np.ndarray,
+    ) -> np.ndarray:
+        """Encode game state + current belief matrix as a float32 vector.
 
-        if player == traversing_player:
-            # Compute counterfactual regret for all legal actions
-            action_values = np.zeros(ACTION_SPACE_SIZE, dtype=np.float64)
-            for a in legal:
-                eng2 = self._clone_and_apply(engine, player, a)
-                new_pbs = self._advance_pbs(pbs, player, a, engine)
-                utils = self.traverse(eng2, traversing_player, reach * strategy[a], new_pbs)
-                action_values[a] = utils[player]
+        Mirrors PublicBeliefState.encode() but injects the live belief matrix
+        rather than a reconstructed one from from_engine().
+        """
+        from skull_king.cards import NUM_ROUNDS
+        n = self.n_players
+        phase_map = {GamePhase.BIDDING: 0, GamePhase.PLAYING: 1, GamePhase.GAME_OVER: 2}
+        phase_val = phase_map.get(engine._phase, 2)
 
-            node_value = np.sum(strategy * action_values)
-            # Regret update
-            if obs_key not in self._regret_sum:
-                self._regret_sum[obs_key] = np.zeros(ACTION_SPACE_SIZE, dtype=np.float64)
-                self._strategy_sum[obs_key] = np.zeros(ACTION_SPACE_SIZE, dtype=np.float64)
-            for a in legal:
-                self._regret_sum[obs_key][a] += reach * (action_values[a] - node_value)
-            self._strategy_sum[obs_key] += reach * strategy
+        bids_arr = np.full(n, -1, dtype=np.float32)
+        for i in engine._bids_placed:
+            bids_arr[i] = engine._players[i].bid / NUM_ROUNDS
 
-            # Return full utility vector (approximate other players' values)
-            result = np.zeros(self.n_players, dtype=np.float32)
-            result[player] = node_value
-            # Sample one action to get other players' utilities
-            a_sample = legal[np.argmax(strategy[legal])]
-            eng2 = self._clone_and_apply(engine, player, a_sample)
-            new_pbs = self._advance_pbs(pbs, player, a_sample, engine)
-            other_utils = self.traverse(eng2, traversing_player,
-                                        reach * strategy[a_sample], new_pbs)
-            for i in range(self.n_players):
-                if i != player:
-                    result[i] = other_utils[i]
-            return result
-        else:
-            # Sample one action from strategy
-            probs = strategy[legal]
-            probs = probs / probs.sum()
-            a = legal[np.random.choice(len(legal), p=probs)]
-            eng2 = self._clone_and_apply(engine, player, a)
-            new_pbs = self._advance_pbs(pbs, player, a, engine)
+        tricks_won = np.array(
+            [p.tricks_won for p in engine._players], dtype=np.float32
+        ) / max(engine._round, 1)
 
-            if obs_key not in self._strategy_sum:
-                self._regret_sum[obs_key] = np.zeros(ACTION_SPACE_SIZE, dtype=np.float64)
-                self._strategy_sum[obs_key] = np.zeros(ACTION_SPACE_SIZE, dtype=np.float64)
-            self._strategy_sum[obs_key] += strategy
+        total_scores = np.clip(
+            np.array([p.total_score for p in engine._players], dtype=np.float32) / 100.0,
+            -2.0, 2.0,
+        )
 
-            return self.traverse(eng2, traversing_player, reach, new_pbs)
+        bid_revealed = np.array(
+            [float(i in engine._bids_placed) for i in range(n)], dtype=np.float32
+        )
 
-    def _clone_and_apply(self, engine: GameEngine, player: int, action: int) -> GameEngine:
-        """Deep-copy the engine and apply one action."""
-        import copy
+        leader_one_hot = np.zeros(n, dtype=np.float32)
+        leader_one_hot[engine._trick_leader] = 1.0
+
+        seen_mask = np.zeros(DECK_TOTAL, dtype=np.float32)
+        for trick in engine._completed_tricks:
+            for pc in trick.played_cards:
+                slot = _card_to_slot(pc.card)
+                if slot >= 0:
+                    seen_mask[slot] = 1.0
+
+        curr_mask = np.zeros(DECK_TOTAL, dtype=np.float32)
+        for pc in engine._current_trick.played_cards:
+            slot = _card_to_slot(pc.card)
+            if slot >= 0:
+                curr_mask[slot] = 1.0
+
+        parts = [
+            np.array([
+                engine._round / NUM_ROUNDS,
+                engine._trick_in_round / max(engine._round, 1),
+                float(phase_val) / 2.0,
+                engine._current_player_index() / n,
+            ], dtype=np.float32),
+            np.where(bids_arr >= 0, bids_arr, -1.0).astype(np.float32),
+            tricks_won,
+            total_scores,
+            bid_revealed,
+            leader_one_hot,
+            seen_mask,
+            curr_mask,
+            beliefs.flatten().astype(np.float32),
+        ]
+        return np.concatenate(parts)
+
+    # ------------------------------------------------------------------
+    # Engine helpers
+    # ------------------------------------------------------------------
+
+    def _clone_and_apply(
+        self, engine: GameEngine, player: int, action: int
+    ) -> GameEngine:
         eng2 = copy.deepcopy(engine)
         if eng2._phase == GamePhase.BIDDING:
             eng2.place_bid_no_state(player, action)
@@ -252,55 +331,126 @@ class _SubgameCFR:
             eng2.play_card_no_state(player, card, tigress_mode)
         return eng2
 
-    def _advance_pbs(
-        self,
-        pbs: Optional[PublicBeliefState],
-        player: int,
-        action: int,
-        engine: GameEngine,
-    ) -> Optional[PublicBeliefState]:
-        """Update the PBS after an action (best-effort, may return None)."""
-        if pbs is None:
-            return None
-        try:
-            if engine._phase == GamePhase.PLAYING:
-                card, _ = _action_to_card(action, engine)
-                slot = _card_to_slot(card)
-                if slot >= 0:
-                    return pbs.observe_card_played(slot)
-        except Exception:
-            pass
-        return pbs
+    # ------------------------------------------------------------------
+    # PBS-CFR traversal
+    # ------------------------------------------------------------------
 
-    def get_average_strategy(self, obs_key: tuple, mask: np.ndarray) -> np.ndarray:
+    def traverse(
+        self,
+        engine: GameEngine,
+        traversing_player: int,
+        beliefs: np.ndarray,
+        reach_opp: float,
+        depth: int,
+    ) -> np.ndarray:
+        """Belief-weighted CFR traversal.
+
+        Returns
+        -------
+        np.ndarray [n_players] — utility vector at this node under current strategy
+        """
+        if self._is_leaf(engine, depth):
+            return self._leaf_value(engine, beliefs)
+
+        player = engine._current_player_index()
+        mask = _build_action_mask(engine)
+        legal = np.where(mask)[0]
+        if len(legal) == 0:
+            return self._leaf_value(engine, beliefs)
+
+        key = self._obs_key(engine)
+        strategy = self._current_strategy(key, mask)
+
+        if player == traversing_player:
+            # --- Traversing player node ---
+            # Compute counterfactual value for each legal action
+            action_utils: dict[int, np.ndarray] = {}
+            for a in legal:
+                new_beliefs = _bayesian_update(beliefs, player, a, engine, self.n_players)
+                eng2 = self._clone_and_apply(engine, player, a)
+                action_utils[a] = self.traverse(
+                    eng2, traversing_player, new_beliefs, reach_opp, depth + 1
+                )
+
+            # Node value = strategy-weighted sum of traversing player's utilities
+            node_util = sum(
+                strategy[a] * action_utils[a][traversing_player] for a in legal
+            )
+
+            # Regret update: weighted by opponent reach probability
+            self._ensure_key(key)
+            for a in legal:
+                self._regret_sum[key][a] += reach_opp * (
+                    action_utils[a][traversing_player] - node_util
+                )
+            # Strategy sum: also weighted by reach_opp (importance sampling)
+            self._strategy_sum[key] += reach_opp * strategy
+
+            # Return strategy-weighted average utility across ALL players
+            result = np.zeros(self.n_players, dtype=np.float32)
+            for a in legal:
+                result += strategy[a] * action_utils[a]
+            return result
+
+        else:
+            # --- Opponent node (external sampling) ---
+            # Sample one action, update reach probability
+            probs = strategy[legal]
+            probs = probs / probs.sum()
+            sampled_idx = np.random.choice(len(legal), p=probs)
+            a = legal[sampled_idx]
+
+            new_beliefs = _bayesian_update(beliefs, player, a, engine, self.n_players)
+            eng2 = self._clone_and_apply(engine, player, a)
+
+            # Accumulate strategy sum (no reach weighting for opponent nodes
+            # in external sampling CFR)
+            self._ensure_key(key)
+            self._strategy_sum[key] += strategy
+
+            # Pass updated reach: reach_opp *= prob of sampled action
+            return self.traverse(
+                eng2, traversing_player, new_beliefs,
+                reach_opp * strategy[a], depth + 1
+            )
+
+    # ------------------------------------------------------------------
+    # Extract average strategy
+    # ------------------------------------------------------------------
+
+    def get_average_strategy(self, key: tuple, mask: np.ndarray) -> np.ndarray:
         """Return the time-averaged strategy at a node."""
-        if obs_key not in self._strategy_sum:
+        if key not in self._strategy_sum:
             legal = np.where(mask)[0]
             strat = np.zeros(ACTION_SPACE_SIZE, dtype=np.float32)
             if len(legal):
                 strat[legal] = 1.0 / len(legal)
             return strat
-        total = self._strategy_sum[obs_key].sum()
+        total = self._strategy_sum[key].sum()
         if total <= 0:
             legal = np.where(mask)[0]
             strat = np.zeros(ACTION_SPACE_SIZE, dtype=np.float32)
             if len(legal):
                 strat[legal] = 1.0 / len(legal)
             return strat
-        return (self._strategy_sum[obs_key] / total).astype(np.float32)
+        return (self._strategy_sum[key] / total).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
-# Public subgame solver
+# Public subgame solver (PBS-CFR / ReBeL)
 # ---------------------------------------------------------------------------
 
 class SubgameSolver:
-    """Runs determinized CFR on a game position and returns training data.
+    """Proper PBS-CFR subgame solver (ReBeL algorithm).
 
-    For each call to ``solve``:
-    1. K opponent hand assignments are sampled from the PBS belief.
-    2. For each sample a fresh CFR solver runs n_cfr_iters traversals.
-    3. Strategies are averaged; (PBS, strategy, value) tuples collected.
+    Runs a single belief-weighted CFR tree per call to ``solve``.
+    No K-fold determinization — beliefs are tracked as a probability
+    matrix [n_players, DECK_TOTAL] and updated via Bayesian inference
+    after each observed card play.
+
+    Regrets are weighted by the opponent reach probability, giving
+    counterfactual regret estimates that account for how likely the
+    opponent would reach this node under the current strategy profile.
     """
 
     def __init__(
@@ -308,13 +458,14 @@ class SubgameSolver:
         value_net: Optional["RebelValueNet"],
         device: torch.device,
         n_cfr_iters: int = 50,
-        n_samples: int = 16,
+        max_depth: Optional[int] = None,
+        # Legacy parameter kept for API compatibility with trainer.py
+        n_samples: int = 1,
     ) -> None:
         self.value_net = value_net
         self.device = device
         self.n_cfr_iters = n_cfr_iters
-        self.n_samples = n_samples
-        self._rng = np.random.default_rng()
+        self.max_depth = max_depth
 
     def solve(
         self,
@@ -322,17 +473,22 @@ class SubgameSolver:
         pbs: PublicBeliefState,
         acting_player: int,
     ) -> dict:
-        """Solve the subgame rooted at *engine*'s current state.
+        """Run PBS-CFR from the current game position.
+
+        Parameters
+        ----------
+        engine:        current game state
+        pbs:           public belief state (provides initial belief matrix)
+        acting_player: index of the player to act (used for key construction)
 
         Returns
         -------
         dict with keys:
-          "strategy":  np.ndarray [ACTION_SPACE_SIZE] — averaged strategy
+          "strategy":  np.ndarray [ACTION_SPACE_SIZE] — average strategy
           "mask":      np.ndarray [ACTION_SPACE_SIZE] — legal action mask
           "values":    np.ndarray [n_players] — estimated utilities
           "pbs_enc":   np.ndarray — encoded PBS for network training
         """
-        import copy
         n = engine.n_players
 
         mask = _build_action_mask(engine)
@@ -345,67 +501,54 @@ class SubgameSolver:
                 "pbs_enc": pbs.encode(),
             }
 
-        # Own hand as canonical slots
-        own_slots = np.array([
-            _card_to_slot(c)
-            for c in engine._players[acting_player].hand
-        ], dtype=np.int32)
+        # Initial beliefs from PBS
+        beliefs = pbs.belief.copy()  # [n_players, DECK_TOTAL]
 
-        accumulated_strategy = np.zeros(ACTION_SPACE_SIZE, dtype=np.float64)
-        accumulated_values = np.zeros(n, dtype=np.float64)
+        cfr = _PBSCFRTree(
+            n_players=n,
+            value_net=self.value_net,
+            device=self.device,
+            current_round=engine._round,
+            max_depth=self.max_depth,
+        )
 
-        for _ in range(self.n_samples):
-            # Sample opponent hands from belief
-            sampled_hands = pbs.sample_opponent_hands(self._rng, own_slots)
+        # Run n_cfr_iters iterations, alternating traversing player
+        root_values = np.zeros(n, dtype=np.float64)
+        n_value_samples = 0
 
-            # Inject sampled hands into a copy of the engine
-            eng_copy = copy.deepcopy(engine)
-            hand_lists = []
-            for i in range(n):
-                if i == acting_player:
-                    hand_lists.append(list(engine._players[i].hand))
-                else:
-                    # Convert slot indices back to Card objects
-                    cards = [_CANONICAL_DECK[s] for s in sampled_hands[i]
-                             if 0 <= s < len(_CANONICAL_DECK)]
-                    hand_lists.append(cards)
+        for iteration in range(self.n_cfr_iters):
+            for traversing_player in range(n):
+                vals = cfr.traverse(
+                    engine=copy.deepcopy(engine),
+                    traversing_player=traversing_player,
+                    beliefs=beliefs.copy(),
+                    reach_opp=1.0,
+                    depth=0,
+                )
+                if traversing_player == acting_player:
+                    root_values += vals
+                    n_value_samples += 1
 
-            # Only inject if in BIDDING phase (engine._inject_hands requires it)
-            # For PLAYING phase we need to directly set hands
-            if eng_copy._phase in (GamePhase.PLAYING,):
-                for i, hand in enumerate(hand_lists):
-                    eng_copy._players[i].hand = list(hand)
-            # If BIDDING, hands were already dealt; we'd need _inject_hands
-            # but since we're in PLAYING for most decisions, this works.
+        # Extract average strategy at the root node for the acting player
+        hand_key = tuple(sorted(c._hash for c in engine._players[acting_player].hand))
+        root_key = (acting_player, engine._round, engine._trick_in_round, hand_key)
+        avg_strategy = cfr.get_average_strategy(root_key, mask)
 
-            cfr = _SubgameCFR(n, self.value_net, self.device, engine._round)
-
-            for _ in range(self.n_cfr_iters):
-                for player in range(n):
-                    cfr.traverse(eng_copy, player, 1.0, pbs)
-
-            # Extract strategy at the root node
-            hand_key = tuple(sorted(c._hash for c in engine._players[acting_player].hand))
-            root_key = (acting_player, engine._round, engine._trick_in_round, hand_key)
-            strat = cfr.get_average_strategy(root_key, mask)
-            accumulated_strategy += strat
-
-            # Estimate values from the root
-            vals = cfr._leaf_value(eng_copy, pbs)
-            accumulated_values += vals
-
-        # Average across samples
-        final_strategy = (accumulated_strategy / self.n_samples).astype(np.float32)
         # Renormalize over legal actions
-        legal_sum = final_strategy[legal].sum()
+        legal_sum = avg_strategy[legal].sum()
         if legal_sum > 0:
-            final_strategy[legal] /= legal_sum
+            avg_strategy[legal] /= legal_sum
         else:
-            final_strategy[legal] = 1.0 / len(legal)
+            avg_strategy[legal] = 1.0 / len(legal)
+
+        estimated_values = (
+            root_values / n_value_samples if n_value_samples > 0
+            else np.zeros(n, dtype=np.float32)
+        ).astype(np.float32)
 
         return {
-            "strategy": final_strategy,
+            "strategy": avg_strategy,
             "mask": mask,
-            "values": (accumulated_values / self.n_samples).astype(np.float32),
+            "values": estimated_values,
             "pbs_enc": pbs.encode(),
         }

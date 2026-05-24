@@ -1,7 +1,7 @@
 """Entry point for ReBeL training.
 
 Usage:
-    python -m skull_king.training.rebel.train --config cfr_config_rebel_4090.yaml
+    python -m skull_king.training.rebel.train --config configs/rebel/rebel_v1.yaml
 """
 from __future__ import annotations
 

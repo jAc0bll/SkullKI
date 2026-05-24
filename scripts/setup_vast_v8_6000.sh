@@ -3,7 +3,7 @@
 # AMD EPYC 9754 (128c/256t) + 2x RTX PRO 6000 S + 386 GB RAM
 # v8: win-bonus utility, heuristic_frac 0.6, 150 workers, multi-GPU parallel training
 #
-# Usage:  curl -fsSL https://raw.githubusercontent.com/jAc0bll/SkullKI/features/setup_vast_v8_6000.sh | bash
+# Usage:  curl -fsSL https://raw.githubusercontent.com/jAc0bll/SkullKI/features/scripts/setup_vast_v8_6000.sh | bash
 
 set -euo pipefail
 
@@ -15,7 +15,7 @@ else
 fi
 VENV="$REPO_DIR/venv"
 PY=""
-CONFIG="$REPO_DIR/cfr_config_v8_6000.yaml"
+CONFIG="$REPO_DIR/configs/cfr/v8_6000.yaml"
 LOG="$REPO_DIR/training_v8_6000.log"
 SESSION="cfr_v8"
 
@@ -33,7 +33,7 @@ else
     git clone --branch features "$REPO_URL" "$REPO_DIR"
 fi
 echo "      Config files found:"
-ls "$REPO_DIR"/*.yaml
+ls "$REPO_DIR"/configs/cfr/*.yaml "$REPO_DIR"/configs/rebel/*.yaml 2>/dev/null || true
 
 # ── 2. Venv + dependencies ────────────────────────────────────────────────
 echo "[2/6] Setting up venv..."
