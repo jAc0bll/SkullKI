@@ -129,6 +129,15 @@ class RebelTrainer:
 
         os.makedirs(cfg.model_dir, exist_ok=True)
 
+        if cfg.resume_from:
+            self.value_net.load_state_dict(
+                torch.load(f"{cfg.resume_from}_value.pt", map_location=self.device)
+            )
+            self.policy_net.load_state_dict(
+                torch.load(f"{cfg.resume_from}_policy.pt", map_location=self.device)
+            )
+            print(f"Resumed from {cfg.resume_from}", flush=True)
+
         # Raise fd limit — 80 spawn workers need ~10 fds each, default 1024 is too low
         try:
             _soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -164,7 +173,7 @@ class RebelTrainer:
         _p(f"{'='*66}\n")
 
         try:
-            for t in range(1, cfg.n_iterations + 1):
+            for t in range(cfg.start_iter, cfg.n_iterations + 1):
                 t0 = time.time()
 
                 n_val, n_pol = self._self_play()

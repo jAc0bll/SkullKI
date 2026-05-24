@@ -25,7 +25,7 @@ policy_hidden: [512, 512, 256]
 
 # Optimization
 value_lr: 1.0e-3
-policy_lr: 1.0e-3
+policy_lr: 3.0e-4
 batch_size: 4096
 train_steps: 200
 buffer_capacity: 500_000
@@ -35,3 +35,7 @@ eval_every: 50
 checkpoint_every: 100
 model_dir: models/rebel
 run_name: rebel_v1_4090
+
+# Resume from best checkpoint
+resume_from: models/rebel/rebel_v1_4090_iter100
+start_iter: 101

@@ -45,6 +45,10 @@ class RebelConfig:
     model_dir: str = "models/rebel"
     run_name: str = "rebel_v1"
 
+    # Resume
+    resume_from: str = ""   # base path e.g. models/rebel/run_iter100
+    start_iter: int = 1
+
 
 def _load_config(path: str) -> RebelConfig:
     with open(path) as f:
