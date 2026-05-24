@@ -283,7 +283,9 @@ class RebelTrainer:
 
             with amp_ctx:
                 log_probs = self.policy_net(enc_t, mask_t)
-                loss = -(strat_t * log_probs).nan_to_num(0.0).sum(dim=-1).mean()
+            # Cast to fp32 + clamp: fp16 can produce -inf for low-prob legal actions,
+            # making -(strat * -inf) = +inf and blowing up the loss.
+            loss = -(strat_t * log_probs.float().clamp(min=-100.0)).nan_to_num(0.0).sum(dim=-1).mean()
 
             self.policy_opt.zero_grad()
             self._scaler.scale(loss).backward()
