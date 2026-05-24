@@ -1,0 +1,41 @@
+# Deep CFR — v8 split-network, 2x RTX PRO 6000 S + AMD EPYC 9754 (128c/256t)
+# Run:  python -m skull_king.training.cfr.train --config cfr_config_v8_6000.yaml
+#
+# Hardware: 128 cores / 256 threads, 2x RTX PRO 6000 S, 386 GB RAM
+#
+# v8 changes vs v7:
+#   - Win-bonus in utility (+0.5 to winner, zero-sum) → agent explicitly targets #1
+#   - heuristic_frac: 0.4 → 0.6 → trains against stronger opponents
+#   - num_workers: 100 → 150 (128 cores available)
+#   - Multi-GPU: bid nets on cuda:0, play nets on cuda:1 (parallel training)
+#
+# Timing estimate: collect ~3s (150 workers) + train ~3s (2x GPU parallel) ≈ ~6s/it
+# Cost estimate: ~3000 iters × 6s ≈ 5h
+
+n_players: 4
+env_seed: 42
+
+n_cfr_iterations: 3000
+traversals_per_player: 2500    # 10k total
+num_workers: 150               # 128 cores/256 threads — leave headroom for OS
+
+heuristic_frac: 0.6            # harder opponents during training
+
+split_nets: true
+bid_hidden: [256, 256]
+play_hidden: [512, 512]
+
+adv_lr: 5.0e-4
+adv_batch_size: 8192
+adv_train_steps: 200
+adv_buffer_capacity: 8_000_000
+
+strat_lr: 5.0e-4
+strat_batch_size: 8192
+strat_train_steps: 200
+strat_buffer_capacity: 8_000_000
+
+eval_every_n_iters: 100
+checkpoint_every_n_iters: 250
+model_dir: models/skull_king
+run_name: cfr_v8_6000

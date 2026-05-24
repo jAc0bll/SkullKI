@@ -1,6 +1,7 @@
 """Deep CFR training loop."""
 from __future__ import annotations
 
+import concurrent.futures
 import multiprocessing
 import os
 import sys
@@ -455,14 +456,19 @@ class SplitDeepCFRTrainer:
     def __init__(self, cfg: "CFRConfig") -> None:
         self.cfg = cfg
         self.device = _pick_device()
+        # Use a second GPU for play nets if available — halves training time.
+        n_gpus = torch.cuda.device_count() if self.device.type == "cuda" else 0
+        self.device2 = torch.device("cuda:1") if n_gpus >= 2 else self.device
 
         bid_hidden = tuple(getattr(cfg, "bid_hidden", [256, 256]))
         play_hidden = tuple(getattr(cfg, "play_hidden", [512, 512]))
+        self._bid_hidden = bid_hidden
+        self._play_hidden = play_hidden
 
         self.bid_adv_net = BiddingAdvNet(hidden=bid_hidden).to(self.device)
         self.bid_strat_net = BiddingStratNet(hidden=bid_hidden).to(self.device)
-        self.play_adv_net = PlayingAdvNet(hidden=play_hidden).to(self.device)
-        self.play_strat_net = PlayingStratNet(hidden=play_hidden).to(self.device)
+        self.play_adv_net = PlayingAdvNet(hidden=play_hidden).to(self.device2)
+        self.play_strat_net = PlayingStratNet(hidden=play_hidden).to(self.device2)
         for net in (self.bid_adv_net, self.bid_strat_net,
                     self.play_adv_net, self.play_strat_net):
             net.eval()
@@ -486,9 +492,8 @@ class SplitDeepCFRTrainer:
 
         self._rng = np.random.default_rng(seed)
         os.makedirs(cfg.model_dir, exist_ok=True)
-        # GradScaler enables fp16 matmuls on CUDA (2x throughput on 4090 tensor cores).
-        # enabled=False is a transparent no-op on CPU/DirectML.
         self._scaler = torch.cuda.amp.GradScaler(enabled=(self.device.type == "cuda"))
+        self._scaler2 = torch.cuda.amp.GradScaler(enabled=(self.device2.type == "cuda"))
 
     # ------------------------------------------------------------------
     # Main loop
@@ -508,11 +513,16 @@ class SplitDeepCFRTrainer:
         _p(f"  device: {self.device}")
         if self.device.type == "cuda":
             import torch.cuda as _cu
-            gpu_name = _cu.get_device_name(0)
-            gpu_gb   = _cu.get_device_properties(0).total_memory / 1e9
+            for _i in range(_cu.device_count()):
+                _n = _cu.get_device_name(_i)
+                _gb = _cu.get_device_properties(_i).total_memory / 1e9
+                _role = "bid nets" if _i == 0 else "play nets"
+                _p(f"  GPU {_i}: {_n}  ({_gb:.0f} GB)  [{_role}]")
             _test = torch.ones(128, 128, device=self.device) @ torch.ones(128, 128, device=self.device)
-            _p(f"  GPU verified: {gpu_name}  ({gpu_gb:.0f} GB)  [matmul OK]")
+            _p(f"  matmul OK")
             del _test
+            if self.device2 != self.device:
+                _p(f"  Multi-GPU: bid nets→cuda:0  play nets→cuda:1  (parallel training)")
         from skull_king.cfr_engine import SplitCEngine
         _p(f"  C engine: {'active (split traversal ~5ms/game)' if SplitCEngine.available else 'NOT BUILT — using slow Python traversal (35ms/game)'}")
         _p(f"{'='*66}\n")
@@ -576,22 +586,58 @@ class SplitDeepCFRTrainer:
                 t_collect = time.time() - tc
 
                 tt = time.time()
-                bid_adv_loss = self._train_net(
-                    self.bid_adv_net, self.bid_adv_opt, self.bid_adv_buf,
-                    cfg.adv_batch_size, cfg.adv_train_steps, mode="adv",
-                )
-                bid_strat_loss = self._train_net(
-                    self.bid_strat_net, self.bid_strat_opt, self.bid_strat_buf,
-                    cfg.strat_batch_size, cfg.strat_train_steps, mode="strat",
-                )
-                play_adv_loss = self._train_net(
-                    self.play_adv_net, self.play_adv_opt, self.play_adv_buf,
-                    cfg.adv_batch_size, cfg.adv_train_steps, mode="adv",
-                )
-                play_strat_loss = self._train_net(
-                    self.play_strat_net, self.play_strat_opt, self.play_strat_buf,
-                    cfg.strat_batch_size, cfg.strat_train_steps, mode="strat",
-                )
+                if self.device2 != self.device:
+                    # Two GPUs: train bid nets on cuda:0 and play nets on cuda:1 in parallel.
+                    # Python threads release the GIL during CUDA kernel launches, so both
+                    # GPUs run independently and the wall-clock time is ~half sequential.
+                    def _train_bid():
+                        b_adv = self._train_net(
+                            self.bid_adv_net, self.bid_adv_opt, self.bid_adv_buf,
+                            cfg.adv_batch_size, cfg.adv_train_steps, mode="adv",
+                            scaler=self._scaler,
+                        )
+                        b_str = self._train_net(
+                            self.bid_strat_net, self.bid_strat_opt, self.bid_strat_buf,
+                            cfg.strat_batch_size, cfg.strat_train_steps, mode="strat",
+                            scaler=self._scaler,
+                        )
+                        return b_adv, b_str
+
+                    def _train_play():
+                        p_adv = self._train_net(
+                            self.play_adv_net, self.play_adv_opt, self.play_adv_buf,
+                            cfg.adv_batch_size, cfg.adv_train_steps, mode="adv",
+                            scaler=self._scaler2,
+                        )
+                        p_str = self._train_net(
+                            self.play_strat_net, self.play_strat_opt, self.play_strat_buf,
+                            cfg.strat_batch_size, cfg.strat_train_steps, mode="strat",
+                            scaler=self._scaler2,
+                        )
+                        return p_adv, p_str
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _ex:
+                        _f0 = _ex.submit(_train_bid)
+                        _f1 = _ex.submit(_train_play)
+                        bid_adv_loss, bid_strat_loss = _f0.result()
+                        play_adv_loss, play_strat_loss = _f1.result()
+                else:
+                    bid_adv_loss = self._train_net(
+                        self.bid_adv_net, self.bid_adv_opt, self.bid_adv_buf,
+                        cfg.adv_batch_size, cfg.adv_train_steps, mode="adv",
+                    )
+                    bid_strat_loss = self._train_net(
+                        self.bid_strat_net, self.bid_strat_opt, self.bid_strat_buf,
+                        cfg.strat_batch_size, cfg.strat_train_steps, mode="strat",
+                    )
+                    play_adv_loss = self._train_net(
+                        self.play_adv_net, self.play_adv_opt, self.play_adv_buf,
+                        cfg.adv_batch_size, cfg.adv_train_steps, mode="adv",
+                    )
+                    play_strat_loss = self._train_net(
+                        self.play_strat_net, self.play_strat_opt, self.play_strat_buf,
+                        cfg.strat_batch_size, cfg.strat_train_steps, mode="strat",
+                    )
                 t_train = time.time() - tt
 
                 elapsed = time.time() - t0
@@ -743,49 +789,60 @@ class SplitDeepCFRTrainer:
         batch_size: int,
         max_steps: int,
         mode: str,
+        scaler: "torch.cuda.amp.GradScaler | None" = None,
     ) -> float:
         if len(buf) < batch_size:
             return 0.0
+        if scaler is None:
+            scaler = self._scaler
+        dev = next(net.parameters()).device
         effective_steps = min(max_steps, max(1, len(buf) // (batch_size // 4)))
         net.train()
-        total = torch.zeros(1, device=self.device)
-        amp_ctx = torch.amp.autocast(device_type=self.device.type,
-                                     enabled=(self.device.type == "cuda"))
+        total = torch.zeros(1, device=dev)
+        amp_ctx = torch.amp.autocast(device_type=dev.type, enabled=(dev.type == "cuda"))
         for _ in range(effective_steps):
             if mode == "adv":
                 obs, masks, targets, _ = buf.sample(batch_size)
-                obs_t = torch.from_numpy(obs).float().to(self.device)
-                tgt_t = torch.from_numpy(targets).float().to(self.device)
-                mask_f = torch.from_numpy(masks).float().to(self.device)
+                obs_t = torch.from_numpy(obs).float().to(dev)
+                tgt_t = torch.from_numpy(targets).float().to(dev)
+                mask_f = torch.from_numpy(masks).float().to(dev)
                 with amp_ctx:
                     pred = net(obs_t)
                     diff = (pred - tgt_t) * mask_f
                     loss = (diff * diff).sum() / mask_f.sum().clamp(min=1)
             else:
                 obs, masks, strats = buf.sample(batch_size)
-                obs_t = torch.from_numpy(obs).float().to(self.device)
-                mask_t = torch.from_numpy(masks).to(self.device)
-                strat_t = torch.from_numpy(strats).float().to(self.device)
+                obs_t = torch.from_numpy(obs).float().to(dev)
+                mask_t = torch.from_numpy(masks).to(dev)
+                strat_t = torch.from_numpy(strats).float().to(dev)
                 with amp_ctx:
                     logits = net(obs_t).masked_fill(~mask_t, float("-inf"))
                     log_probs = torch.log_softmax(logits, dim=-1)
                     loss = -(strat_t * log_probs).nan_to_num(0.0).sum(dim=-1).mean()
 
             opt.zero_grad()
-            self._scaler.scale(loss).backward()
-            self._scaler.unscale_(opt)
+            scaler.scale(loss).backward()
+            scaler.unscale_(opt)
             torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
-            self._scaler.step(opt)
-            self._scaler.update()
-            total += loss.detach()  # stay on GPU — avoid per-step CUDA sync
+            scaler.step(opt)
+            scaler.update()
+            total += loss.detach()
         net.eval()
-        return float(total.item() / effective_steps)  # single sync at end
+        return float(total.item() / effective_steps)
 
     def _evaluate(self, t: int) -> None:
         from skull_king.training.cfr.agent import SplitCFRAgent
         n = self.cfg.n_players
+        # If play nets live on a different GPU, copy weights to device for inference
+        # so the tournament runner doesn't need to know about multiple devices.
+        if self.device2 != self.device:
+            play_eval = PlayingStratNet(hidden=self._play_hidden).to(self.device)
+            play_eval.load_state_dict(self.play_strat_net.state_dict())
+            play_eval.eval()
+        else:
+            play_eval = self.play_strat_net
         agent = SplitCFRAgent(
-            self.bid_strat_net, self.play_strat_net, n_players=n, name="CFR-split"
+            self.bid_strat_net, play_eval, n_players=n, name="CFR-split"
         )
         runner = TournamentRunner(seed=999)
         r_r = runner.run([agent] + [RandomAgent(i) for i in range(n - 1)], n_games=200)
