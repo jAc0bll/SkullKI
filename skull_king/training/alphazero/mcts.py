@@ -233,49 +233,80 @@ def run_batched_mcts(
         if add_root_noise and len(legal) > 0:
             _add_dirichlet_noise(roots[i], dirichlet_alpha, dirichlet_eps, rng)
 
+    from skull_king.training.cfr.traversal import _utility_from_scores
+
     # Run simulations
     for _ in range(n_simulations):
-        # Tree traversal: each game walks down its tree
+        # Tree traversal in LOCKSTEP — all games descend together one tree-level
+        # at a time so opponent advancement can be batched across games.
         paths: list[list[MCTSNode]] = [[r] for r in roots]
         clones = [_fast_clone_engine(eng) for eng in engines_root]
         leaf_values = np.zeros(B, dtype=np.float32)
-        leaf_terminal = np.zeros(B, dtype=bool)
-        needs_expand: list[int] = []
+        done = np.zeros(B, dtype=bool)        # finished selection (hit leaf/terminal)
 
+        # Helper to mark a game as terminal and record its value
+        def _finalize_terminal(i: int) -> None:
+            scores = [p.total_score for p in clones[i]._players]
+            leaf_values[i] = _utility_from_scores(scores, agent_seat)
+            done[i] = True
+
+        # Catch any games that are already terminal at the root
         for i in range(B):
-            node = roots[i]
-            eng = clones[i]
+            if clones[i]._phase == GamePhase.GAME_OVER:
+                _finalize_terminal(i)
 
-            # Walk to a leaf (a node without expansion) or until terminal
-            while node.expanded and eng._phase != GamePhase.GAME_OVER:
+        # Level-by-level descent until all games hit a leaf or terminal
+        while not done.all():
+            # Phase 1: PUCT-select for each still-active game (CPU only)
+            stepping = [i for i in range(B) if not done[i]]
+            actions: dict[int, int] = {}
+            for i in stepping:
+                node = paths[i][-1]
+                if not node.expanded:
+                    done[i] = True                # found leaf to expand
+                    continue
+                if node.children is None or not node.children:
+                    done[i] = True
+                    continue
                 a = _puct_select(node, c_puct)
-                if node.children is None or a not in node.children:
-                    break
+                actions[i] = a
+
+            if not actions:
+                break
+
+            # Phase 2: apply agent actions in CPU
+            advancing: list[int] = []
+            advancing_engs: list = []
+            for i, a in actions.items():
                 try:
-                    _apply_action(eng, agent_seat, a)
+                    _apply_action(clones[i], agent_seat, a)
                 except Exception:
-                    eng._phase = GamePhase.GAME_OVER
-                    break
-                node = node.children[a]
-                paths[i].append(node)
+                    clones[i]._phase = GamePhase.GAME_OVER
+                paths[i].append(paths[i][-1].children[a])
+                if clones[i]._phase == GamePhase.GAME_OVER:
+                    _finalize_terminal(i)
+                else:
+                    advancing.append(i)
+                    advancing_engs.append(clones[i])
 
-                # Advance opponents up to agent's next turn (or terminal)
-                terminal_after = _advance_opponents([eng], network, agent_seat, device, rng)
-                if terminal_after[0]:
-                    break
-
-            # Determine leaf status
-            if eng._phase == GamePhase.GAME_OVER:
-                # Terminal — use seat-0 score scaled to [-1, +1] later by runner
-                # Use raw normalized utility for backup
-                scores = [p.total_score for p in eng._players]
-                from skull_king.training.cfr.traversal import _utility_from_scores
-                leaf_values[i] = _utility_from_scores(scores, agent_seat)
-                leaf_terminal[i] = True
-            else:
-                needs_expand.append(i)
+            # Phase 3: batched opponent advancement across all advancing games
+            if advancing_engs:
+                terminal_after = _advance_opponents(
+                    advancing_engs, network, agent_seat, device, rng,
+                )
+                for k, i in enumerate(advancing):
+                    if terminal_after[k]:
+                        _finalize_terminal(i)
+            # Loop continues: any game still not done has reached a new node;
+            # next iteration's PUCT-select decides if it descends further.
 
         # Batch-expand all non-terminal leaves
+        needs_expand: list[int] = []
+        for i in range(B):
+            # leaf_values is 0 for non-terminal leaves; expand them.
+            if clones[i]._phase != GamePhase.GAME_OVER:
+                needs_expand.append(i)
+
         if needs_expand:
             sub_engines = [clones[i] for i in needs_expand]
             priors, values, masks = _batched_forward(
