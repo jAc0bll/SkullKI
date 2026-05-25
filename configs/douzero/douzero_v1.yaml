@@ -1,18 +1,20 @@
-# DouZero-Skull-King v1 — pure MC Q-learning with curriculum self-play
+# DouZero-Skull-King v1 — pure MC Q-learning with self-play + league
+#
+# Post-mortem of curriculum-mix attempt:
+#   With per-seat random opponent assignment (heuristic 40% / random 20% /
+#   self 30% / league 10%), MC returns varied more with opponent identity
+#   than with action choice. The Q-net learned the average return across
+#   the mix and could no longer distinguish good actions from bad ones —
+#   vs_random *degraded* from 61% → 47% over 200 iters.
+#
+# This config: pure self-play + league pool (frozen past snapshots only).
+# Heuristic exposure happens at eval time only. This is closer to the
+# original DouZero recipe.
 #
 # Single GPU:
 #   python -m skull_king.training.douzero.train --config configs/douzero/douzero_v1.yaml
-#
-# Multi-GPU (e.g. 4× RTX 4090):
-#   torchrun --nproc_per_node=4 --master_port=29500 \
-#       -m skull_king.training.douzero.train --config configs/douzero/douzero_v1.yaml
-#
-# Algorithm:
-#   - Q(s, ·) network outputs Q-values per action; MC return as target.
-#   - Curriculum: heuristic + random opponents early, more self + league late.
-#   - League: rolling FIFO of past Q-net snapshots, used as opponents.
-#   - Only seat-0 (live agent) transitions trained on; seats 1-3 act with
-#     mixed opponents to provide diverse data distributions.
+# Multi-GPU (e.g. 4 GPUs):
+#   torchrun --nproc_per_node=4 -m skull_king.training.douzero.train --config configs/douzero/douzero_v1.yaml
 
 n_players: 4
 seed: 42
@@ -25,29 +27,33 @@ n_envs: 2048
 # ── Exploration ─────────────────────────────────────────────────────
 epsilon_start: 0.10
 epsilon_end:   0.01
-epsilon_decay: 2500
+epsilon_decay: 3000
 
-# ── Curriculum (linear blend across n_iterations) ───────────────────
-# Probability that each non-seat-0 seat plays as each opponent type.
-self_start:      0.30
+# ── Opponent mix: pure self-play + league ──────────────────────────
+# All seats are either the live agent or a frozen past snapshot.
+# Heuristic / Random opponents disabled — they introduced too much
+# return variance and broke MC Q-learning.
+self_start:      0.70
 self_end:        0.70
-league_start:    0.10
-league_end:      0.25
-heuristic_start: 0.40
-heuristic_end:   0.05
-random_start:    0.20
+league_start:    0.30
+league_end:      0.30
+heuristic_start: 0.00
+heuristic_end:   0.00
+random_start:    0.00
 random_end:      0.00
-league_capacity: 8
-league_snapshot_every: 200
+league_capacity: 12
+league_snapshot_every: 100
 
 # ── Network ─────────────────────────────────────────────────────────
 hidden: [1024, 1024, 512, 256]
 compile_nets: true
 
 # ── Optimization ────────────────────────────────────────────────────
+# Replay ratio at 20 train_steps × 4096 batch / ~9k seat-0 transitions/iter
+# ≈ 9x per sample — within the safe range for Q-learning.
 lr: 5.0e-4
 batch_size: 4096
-train_steps: 250
+train_steps: 20
 buffer_capacity: 2_000_000
 grad_clip: 1.0
 
@@ -55,7 +61,7 @@ grad_clip: 1.0
 eval_every: 50
 checkpoint_every: 250
 model_dir: models/douzero
-run_name: douzero_v1_4090
+run_name: douzero_v1_selfplay
 
 resume_from: ""
 start_iter: 1
