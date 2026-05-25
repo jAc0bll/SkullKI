@@ -22,6 +22,12 @@ class PlayerState:
     tricks_won_this_round: int = 0
     accumulated_bonus: int = 0  # sum of TrickResult.bonus_points for tricks won
     score_history: list[RoundScore] = field(default_factory=list)
+    # Cached running sum of score_history. Invalidated lazily by comparing
+    # cache_len to len(score_history); recomputed only on mismatch. Cuts
+    # the 1.3M sum() calls per training-iter measured in profiling down to
+    # ~ once per round_end per player.
+    _total_score_cache: int = 0
+    _cache_len: int = 0
 
     # ------------------------------------------------------------------
     # Score queries
@@ -29,7 +35,11 @@ class PlayerState:
 
     @property
     def total_score(self) -> int:
-        return sum(rs.total_score for rs in self.score_history)
+        n = len(self.score_history)
+        if n != self._cache_len:
+            self._total_score_cache = sum(rs.total_score for rs in self.score_history)
+            self._cache_len = n
+        return self._total_score_cache
 
     @property
     def rounds_played(self) -> int:
