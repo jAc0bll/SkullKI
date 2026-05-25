@@ -49,11 +49,12 @@ hidden: [1024, 1024, 512, 256]
 compile_nets: true
 
 # ── Optimization ────────────────────────────────────────────────────
-# Replay ratio at 20 train_steps × 4096 batch / ~9k seat-0 transitions/iter
-# ≈ 9x per sample — within the safe range for Q-learning.
+# 80 train_steps × 4096 / ~9k seat-0 transitions per iter ≈ 36x replay,
+# a typical DQN-style ratio. The previous 250-step run overfit; the 20-step
+# run underfit (loss stuck at 0.5+). 80 is the sweet spot.
 lr: 5.0e-4
 batch_size: 4096
-train_steps: 20
+train_steps: 80
 buffer_capacity: 2_000_000
 grad_clip: 1.0
 

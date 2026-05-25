@@ -118,10 +118,15 @@ class CurriculumRunner:
         self._mask_t = torch.empty((n_envs, ACTION_SPACE_SIZE), dtype=torch.bool, device=device)
 
         # Per-env seat-0 pending transitions (we only ever store seat-0 data
-        # because that's the learning agent).
+        # because that's the learning agent). We also track the *round* each
+        # transition belongs to, so we can assign per-round-shaped MC returns
+        # (return-to-go from the start of that round until the game ends) —
+        # this gives much sharper credit assignment than a single terminal
+        # game return for a 10-round game.
         self._pend_encs    = np.empty((n_envs, self.MAX_PEND, self._pbs_size), dtype=np.float32)
         self._pend_masks   = np.empty((n_envs, self.MAX_PEND, ACTION_SPACE_SIZE), dtype=bool)
         self._pend_actions = np.empty((n_envs, self.MAX_PEND), dtype=np.int32)
+        self._pend_rounds  = np.empty((n_envs, self.MAX_PEND), dtype=np.int8)
         self._pend_lens    = np.zeros(n_envs, dtype=np.int32)
 
         # Per-env opponent assignment table (assigned at game start, [n_envs, n_players])
@@ -260,6 +265,7 @@ class CurriculumRunner:
                         self._pend_encs[i, L]    = enc_np[k]
                         self._pend_masks[i, L]   = mask_np[k]
                         self._pend_actions[i, L] = a
+                        self._pend_rounds[i, L]  = eng._round    # 1-indexed round
                         self._pend_lens[i] = L + 1
 
                 try:
@@ -311,17 +317,34 @@ class CurriculumRunner:
         return a.cpu().numpy().astype(np.int32)
 
     def _flush(self, i: int, buf: "MCReplayBuffer") -> None:
+        """Flush seat-0 transitions with per-round-shaped MC returns.
+
+        For each transition at round r, the return-to-go is the seat-0
+        score earned in rounds r, r+1, ..., 10. This gives a much denser
+        learning signal than a single terminal game return spanning 65
+        decisions over 10 rounds.
+        """
         L = int(self._pend_lens[i])
         if L == 0:
             return
         eng = self.engines[i]
-        scores = [p.total_score for p in eng._players]
-        ret = _utility_from_scores(scores, 0)  # always seat 0 for learning agent
+
+        # seat-0 per-round scores (1-indexed by round number)
+        score_history = eng._players[0].score_history  # list[RoundScore], length 10
+        round_scores = np.array(
+            [rs.total_score for rs in score_history], dtype=np.float32
+        )                                                # shape [n_rounds]
+        # tail_scores[r] = sum of scores from round r+1..end (1-indexed r)
+        tail = np.concatenate([round_scores, np.zeros(1, dtype=np.float32)])
+        cumtail = tail[::-1].cumsum()[::-1]              # cumtail[k] = sum(tail[k:])
 
         encs    = self._pend_encs[i, :L]
         masks   = self._pend_masks[i, :L]
         actions = self._pend_actions[i, :L]
-        returns = np.full(L, ret, dtype=np.float32)
+        rounds  = self._pend_rounds[i, :L].astype(np.int32) - 1  # → 0-indexed
+        rounds  = np.clip(rounds, 0, len(round_scores))
+        returns = cumtail[rounds].astype(np.float32)
+
         buf.add_batch(encs, masks, actions, returns)
         self._pend_lens[i] = 0
 
