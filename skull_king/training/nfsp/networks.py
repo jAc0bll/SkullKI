@@ -19,6 +19,15 @@ def _mlp(in_size: int, hidden: tuple[int, ...], out_size: int) -> nn.Sequential:
     return nn.Sequential(*layers)
 
 
+def _mask_fill_value(x: torch.Tensor) -> float:
+    """fp16/fp32-safe sentinel for masking out illegal actions.
+
+    -1e9 overflows fp16 to -inf which is unsafe under AMP. Use the dtype's
+    finite minimum so log_softmax produces well-defined probabilities (≈ 0).
+    """
+    return torch.finfo(x.dtype).min
+
+
 class NfspQNet(nn.Module):
     """Q-network: predicts expected return for each action given state."""
 
@@ -28,7 +37,7 @@ class NfspQNet(nn.Module):
 
     def forward(self, enc: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         q = self.net(enc)
-        return q.masked_fill(~mask, -1e9)
+        return q.masked_fill(~mask, _mask_fill_value(q))
 
 
 class NfspAvgNet(nn.Module):
@@ -40,5 +49,5 @@ class NfspAvgNet(nn.Module):
 
     def forward(self, enc: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         logits = self.net(enc)
-        logits = logits.masked_fill(~mask, -1e9)
+        logits = logits.masked_fill(~mask, _mask_fill_value(logits))
         return F.log_softmax(logits, dim=-1)
