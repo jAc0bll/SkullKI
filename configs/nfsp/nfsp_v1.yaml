@@ -9,8 +9,8 @@ seed: 42
 
 # Collection
 n_iterations: 2000
-collect_steps: 16384     # decisions per iter (~1 batch of 512-env games)
-n_envs: 512              # parallel game environments
+collect_steps: 32768     # decisions per iter — more data, better GPU saturation
+n_envs: 2048             # parallel game environments — batch size for inference
 
 # NFSP
 eta: 0.1                 # 10% BR, 90% average strategy

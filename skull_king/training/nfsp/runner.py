@@ -121,44 +121,59 @@ class VectorizedRunner:
             enc_t  = self._enc_t[:N]
             mask_t = self._mask_t[:N]
 
+            # ── GPU-side action selection ────────────────────────────
+            # Decide BR vs Avg per-env upfront, then do action selection on GPU
+            use_br_np = self._rng.random(N) < cfg.eta
+            use_br_t  = torch.from_numpy(use_br_np).to(self.device)
+
             with torch.no_grad():
-                q_vals = q_net(enc_t, mask_t).cpu().numpy()
-                avg_lp = avg_net(enc_t, mask_t).cpu().numpy()
+                q_vals = q_net(enc_t, mask_t)         # [N, A]
+                avg_lp = avg_net(enc_t, mask_t)       # [N, A]
 
-            use_br = self._rng.random(N) < cfg.eta
+                # BR branch: ε-greedy
+                #   argmax_a Q(s,a) over legal actions (illegal already -1e9)
+                br_greedy = q_vals.argmax(dim=-1)     # [N]
+                #   ε-random: sample uniformly over legal actions
+                legal_f = mask_t.float()
+                legal_probs = legal_f / legal_f.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+                br_random = torch.multinomial(legal_probs, num_samples=1).squeeze(-1)  # [N]
+                explore = (torch.rand(N, device=self.device) < cfg.epsilon)
+                br_action = torch.where(explore, br_random, br_greedy)  # [N]
 
-            # ── select and apply actions ─────────────────────────────
-            br_encs:    list[np.ndarray] = []
-            br_masks:   list[np.ndarray] = []
-            br_actions: list[int]        = []
+                # Avg branch: sample from policy
+                avg_probs = avg_lp.exp() * legal_f
+                avg_probs = avg_probs / avg_probs.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+                avg_action = torch.multinomial(avg_probs, num_samples=1).squeeze(-1)  # [N]
+
+                actions_t = torch.where(use_br_t, br_action, avg_action)
+
+            # Single GPU→CPU transfer for the entire batch of actions
+            actions_np = actions_t.cpu().numpy()
+
+            # ── apply actions + store transitions ────────────────────
+            br_mask_np = use_br_np  # boolean array of shape [N]
+            n_br = int(br_mask_np.sum())
+            if n_br > 0:
+                # Indices of BR decisions for batched SL insert
+                br_idx_local = np.where(br_mask_np)[0]
+                sl_buf.add_batch(
+                    enc_np[br_idx_local].copy(),
+                    mask_np[br_idx_local].copy(),
+                    actions_np[br_idx_local].astype(np.int64),
+                )
 
             for j, i in enumerate(active_idx):
                 eng    = self.engines[i]
-                enc    = enc_np[j].copy()   # own copy for buffer storage
-                mask   = mask_np[j].copy()
                 player = players[j]
-                legal  = np.where(mask)[0]
+                action = int(actions_np[j])
 
-                if use_br[j]:
-                    action = (
-                        int(self._rng.choice(legal))
-                        if self._rng.random() < cfg.epsilon
-                        else int(np.argmax(q_vals[j]))
-                    )
-                    br_encs.append(enc)
-                    br_masks.append(mask)
-                    br_actions.append(action)
-                else:
-                    probs = np.exp(avg_lp[j])
-                    np.maximum(probs, 0.0, out=probs)
-                    probs[~mask] = 0.0
-                    s = probs.sum()
-                    probs = probs / s if s > 1e-9 else mask.astype(np.float64) / mask.sum()
-                    action = int(self._rng.choice(len(probs), p=probs))
-
-                self._pending[i].append(
-                    {"enc": enc, "mask": mask, "action": action, "player": player}
-                )
+                # Store transition references (copy needed: enc_np/mask_np overwritten next step)
+                self._pending[i].append({
+                    "enc": enc_np[j].copy(),
+                    "mask": mask_np[j].copy(),
+                    "action": action,
+                    "player": player,
+                })
 
                 try:
                     if eng._phase == GamePhase.BIDDING:
@@ -169,14 +184,6 @@ class VectorizedRunner:
                 except Exception:
                     self._pending[i].pop()
                     self._restart(i)
-
-            # Batch-push BR transitions to SL buffer
-            if br_encs:
-                sl_buf.add_batch(
-                    np.stack(br_encs),
-                    np.stack(br_masks),
-                    np.array(br_actions, dtype=np.int64),
-                )
 
             total += N
 

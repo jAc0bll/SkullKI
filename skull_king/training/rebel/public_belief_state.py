@@ -394,20 +394,12 @@ def _encode_into(eng, acting: int, n: int, row: np.ndarray) -> None:
         if slot >= 0:
             belief[acting, slot] = 1.0
 
-    # Opponents: uniform over unseen cards
-    # unavailable = seen | current_trick | own_hand
-    for s in range(DECK_TOTAL):
-        if seen[s] or curr[s] or belief[acting, s]:
-            continue
-        prob_slot = 1.0  # will normalize below
-        for j in range(n):
-            if j != acting:
-                belief[j, s] = 1.0
-
-    # Normalize each opponent row
-    for j in range(n):
-        if j == acting:
-            continue
-        total = belief[j].sum()
-        if total > 0:
-            belief[j] /= total
+    # Opponents: uniform over unseen cards — fully vectorized
+    # unseen = NOT (seen | current_trick | own_hand)
+    unseen_f = 1.0 - np.maximum(np.maximum(seen, curr), belief[acting])
+    total_unseen = unseen_f.sum()
+    if total_unseen > 0:
+        uniform = unseen_f / total_unseen
+        # Broadcast uniform to every opponent row in one shot
+        belief[:acting] = uniform
+        belief[acting + 1:] = uniform

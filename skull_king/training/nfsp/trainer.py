@@ -128,6 +128,13 @@ class NfspTrainer:
     # Training steps
     # ------------------------------------------------------------------
 
+    def _to_device(self, arr: np.ndarray, dtype: torch.dtype) -> torch.Tensor:
+        """Async non-blocking transfer via pinned memory (CUDA only)."""
+        t = torch.from_numpy(arr).to(dtype=dtype)
+        if self.device.type == "cuda":
+            return t.pin_memory().to(self.device, non_blocking=True)
+        return t.to(self.device)
+
     def _train_q(self) -> float:
         cfg = self.cfg
         if len(self.rl_buf) < cfg.rl_batch_size:
@@ -138,12 +145,17 @@ class NfspTrainer:
         total = 0.0
         amp_ctx = torch.amp.autocast(device_type=self.device.type, enabled=(self.device.type == "cuda"))
 
-        for _ in range(steps):
-            enc, mask, action, returns = self.rl_buf.sample(cfg.rl_batch_size)
-            enc_t = torch.from_numpy(enc).float().to(self.device)
-            mask_t = torch.from_numpy(mask).bool().to(self.device)
-            act_t = torch.from_numpy(action.astype(np.int64)).to(self.device)
-            ret_t = torch.from_numpy(returns).float().to(self.device)
+        # Prefetch first batch
+        enc, mask, action, returns = self.rl_buf.sample(cfg.rl_batch_size)
+        enc_t  = self._to_device(enc, torch.float32)
+        mask_t = self._to_device(mask, torch.bool)
+        act_t  = self._to_device(action.astype(np.int64), torch.int64)
+        ret_t  = self._to_device(returns, torch.float32)
+
+        for k in range(steps):
+            # Prefetch next batch while GPU computes current
+            if k + 1 < steps:
+                next_enc, next_mask, next_action, next_returns = self.rl_buf.sample(cfg.rl_batch_size)
 
             with amp_ctx:
                 q_all = self.q_net(enc_t, mask_t)
@@ -158,6 +170,12 @@ class NfspTrainer:
             self._scaler.update()
             total += loss.item()
 
+            if k + 1 < steps:
+                enc_t  = self._to_device(next_enc, torch.float32)
+                mask_t = self._to_device(next_mask, torch.bool)
+                act_t  = self._to_device(next_action.astype(np.int64), torch.int64)
+                ret_t  = self._to_device(next_returns, torch.float32)
+
         self.q_net.eval()
         return total / steps
 
@@ -171,11 +189,14 @@ class NfspTrainer:
         total = 0.0
         amp_ctx = torch.amp.autocast(device_type=self.device.type, enabled=(self.device.type == "cuda"))
 
-        for _ in range(steps):
-            enc, mask, action = self.sl_buf.sample(cfg.sl_batch_size)
-            enc_t = torch.from_numpy(enc).float().to(self.device)
-            mask_t = torch.from_numpy(mask).bool().to(self.device)
-            act_t = torch.from_numpy(action).to(self.device)
+        enc, mask, action = self.sl_buf.sample(cfg.sl_batch_size)
+        enc_t  = self._to_device(enc, torch.float32)
+        mask_t = self._to_device(mask, torch.bool)
+        act_t  = self._to_device(action, torch.int64)
+
+        for k in range(steps):
+            if k + 1 < steps:
+                next_enc, next_mask, next_action = self.sl_buf.sample(cfg.sl_batch_size)
 
             with amp_ctx:
                 log_probs = self.avg_net(enc_t, mask_t)
@@ -188,6 +209,11 @@ class NfspTrainer:
             self._scaler.step(self.avg_opt)
             self._scaler.update()
             total += loss.item()
+
+            if k + 1 < steps:
+                enc_t  = self._to_device(next_enc, torch.float32)
+                mask_t = self._to_device(next_mask, torch.bool)
+                act_t  = self._to_device(next_action, torch.int64)
 
         self.avg_net.eval()
         return total / steps
