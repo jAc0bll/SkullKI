@@ -51,6 +51,12 @@ class NfspTrainer:
         self.q_net.eval()
         self.avg_net.eval()
 
+        # Keep references to the uncompiled modules — eval uses tiny batches
+        # (one game at a time) which would trigger compile-storms under
+        # mode='reduce-overhead'. Eval re-uses these directly.
+        self._q_net_eager = self.q_net
+        self._avg_net_eager = self.avg_net
+
         # torch.compile: fuses kernels and uses CUDA Graphs internally when shapes stable.
         # `reduce-overhead` mode minimizes per-call launch overhead — perfect for the
         # tight inference loop that fires once per game-step.
@@ -237,7 +243,9 @@ class NfspTrainer:
     def _evaluate(self, t: int) -> None:
         from skull_king.training.nfsp.agent import NfspAgent
         n = self.cfg.n_players
-        agent = NfspAgent(self.avg_net, n_players=n, name="NFSP", device=self.device)
+        # Use the EAGER (uncompiled) avg-net for eval: tournament play is batch-size 1
+        # per decision, which would trigger torch.compile recompilation storms.
+        agent = NfspAgent(self._avg_net_eager, n_players=n, name="NFSP", device=self.device)
         runner = TournamentRunner(seed=999)
         r_r = runner.run([agent] + [RandomAgent(i) for i in range(n - 1)], n_games=200)
         r_h = runner.run([agent] + [HeuristicAgent() for _ in range(n - 1)], n_games=200)
