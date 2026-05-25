@@ -27,8 +27,10 @@ collect_decisions: 2048
 n_envs: 128
 
 # ── MCTS ────────────────────────────────────────────────────────────
-n_simulations: 80
-eval_simulations: 100
+# 80 sims/move was 115s/iter on 4× 4090 — bottlenecked by per-sim Python
+# overhead. 25 sims gives ~3× faster iters with still-meaningful search.
+n_simulations: 25
+eval_simulations: 80
 c_puct: 2.0
 dirichlet_alpha: 0.3
 dirichlet_eps: 0.25
