@@ -263,29 +263,46 @@ class AlphaZeroTrainer:
     # ------------------------------------------------------------------
 
     def _evaluate(self, t: int) -> None:
+        """Two-tier eval:
+           - Every ``eval_every`` iters: fast policy-only eval (no MCTS).
+             Cheap — runs ~1k decisions through batch-1 forward passes.
+           - Every ``mcts_eval_every`` iters: full MCTS-augmented eval.
+             Slower, gives the realistic tournament strength.
+        """
         from skull_king.training.alphazero.agent import AlphaZeroAgent
-        n = self.cfg.n_players
-        agent = AlphaZeroAgent(
-            self._net_eager,
-            n_players=n,
-            name="AlphaZero",
-            device=self.device,
-            n_simulations=self.cfg.eval_simulations,
-            c_puct=self.cfg.c_puct,
-        )
-        runner = TournamentRunner(seed=999)
-        r_r = runner.run([agent] + [RandomAgent(i) for i in range(n - 1)], n_games=100)
-        r_h = runner.run([agent] + [HeuristicAgent() for _ in range(n - 1)], n_games=100)
-        wr_r = r_r.win_rates().get("AlphaZero", 0.0)
-        wr_h = r_h.win_rates().get("AlphaZero", 0.0)
-        av_r = r_r.avg_scores().get("AlphaZero", 0.0)
-        av_h = r_h.avg_scores().get("AlphaZero", 0.0)
-        print(
-            f"  [EVAL iter={t} sims={self.cfg.eval_simulations}]"
-            f"  vs_random={wr_r:.1%} ({av_r:+.0f})"
-            f"  vs_heuristic={wr_h:.1%} ({av_h:+.0f})",
-            flush=True,
-        )
+        cfg = self.cfg
+        n = cfg.n_players
+        tournament = TournamentRunner(seed=999)
+
+        def _eval_with(use_mcts: bool, n_games: int, tag: str) -> None:
+            agent = AlphaZeroAgent(
+                self._net_eager,
+                n_players=n,
+                name="AlphaZero",
+                device=self.device,
+                n_simulations=cfg.eval_simulations if use_mcts else 0,
+                c_puct=cfg.c_puct,
+                use_mcts=use_mcts,
+            )
+            r_r = tournament.run([agent] + [RandomAgent(i) for i in range(n - 1)], n_games=n_games)
+            r_h = tournament.run([agent] + [HeuristicAgent() for _ in range(n - 1)], n_games=n_games)
+            wr_r = r_r.win_rates().get("AlphaZero", 0.0)
+            wr_h = r_h.win_rates().get("AlphaZero", 0.0)
+            av_r = r_r.avg_scores().get("AlphaZero", 0.0)
+            av_h = r_h.avg_scores().get("AlphaZero", 0.0)
+            print(
+                f"  [EVAL iter={t} {tag}]"
+                f"  vs_random={wr_r:.1%} ({av_r:+.0f})"
+                f"  vs_heuristic={wr_h:.1%} ({av_h:+.0f})",
+                flush=True,
+            )
+
+        # Always run the fast policy eval
+        _eval_with(use_mcts=False, n_games=cfg.eval_games_fast, tag="policy")
+
+        # MCTS eval only on a slower cadence
+        if t % cfg.mcts_eval_every == 0:
+            _eval_with(use_mcts=True, n_games=cfg.eval_games_mcts, tag=f"mcts{cfg.eval_simulations}")
 
     def _save(self, base_path: str) -> None:
         torch.save(self._unwrapped().state_dict(), f"{base_path}.pt")

@@ -51,7 +51,10 @@ class AlphaZeroConfig:
     grad_clip: float = 1.0
 
     # ── Logging / persistence ───────────────────────────────────────
-    eval_every: int = 25
+    eval_every: int = 25            # fast policy-only eval cadence
+    mcts_eval_every: int = 200      # slow MCTS-augmented eval cadence
+    eval_games_fast: int = 100      # n games for policy-only eval (cheap)
+    eval_games_mcts: int = 30       # n games for MCTS-augmented eval (expensive)
     checkpoint_every: int = 100
     model_dir: str = "models/alphazero"
     run_name: str = "alphazero_v1"

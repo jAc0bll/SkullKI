@@ -30,6 +30,7 @@ class AlphaZeroAgent(BaseAgent):
         device: torch.device | None = None,
         n_simulations: int = 50,
         c_puct: float = 2.0,
+        use_mcts: bool = True,
     ) -> None:
         self.network = network
         self.n_players = n_players
@@ -37,6 +38,7 @@ class AlphaZeroAgent(BaseAgent):
         self.device = device or next(network.parameters()).device
         self.n_simulations = n_simulations
         self.c_puct = c_puct
+        self.use_mcts = use_mcts        # if False, skip MCTS and play raw policy
         self.network.eval()
         self._engine = None
         self._rng = np.random.default_rng(0)
@@ -56,23 +58,30 @@ class AlphaZeroAgent(BaseAgent):
         return _action_to_card(action, self._engine)
 
     def _mcts_pick(self, player_index: int) -> int:
-        # MCTS is implemented for seat-0 (agent_seat). The TournamentRunner
-        # places this agent in seat 0 in our eval matches, so this works directly.
-        # If hosted in a different seat we'd need to remap perspective.
         mask = _legal_mask(self._engine)
-
-        # If only one legal action, skip MCTS overhead.
         legal = np.where(mask)[0]
         if len(legal) == 1:
             return int(legal[0])
 
+        # Fast path: raw policy argmax — no MCTS overhead, batch=1 forward only.
+        if not self.use_mcts:
+            from skull_king.training.rebel.public_belief_state import PublicBeliefState
+            pbs = PublicBeliefState.from_engine(self._engine, player_index)
+            enc = torch.from_numpy(pbs.encode()).float().unsqueeze(0).to(self.device)
+            mask_t = torch.from_numpy(mask).bool().unsqueeze(0).to(self.device)
+            with torch.no_grad():
+                log_probs, _ = self.network(enc, mask_t)
+            scores = log_probs.squeeze(0).cpu().numpy()
+            return int(legal[np.argmax(scores[legal])])
+
+        # Full MCTS — slower but stronger
         policies, _ = run_batched_mcts(
             engines_root=[self._engine],
             network=self.network,
             n_simulations=self.n_simulations,
             device=self.device,
             c_puct=self.c_puct,
-            dirichlet_alpha=0.3,   # unused (add_root_noise=False)
+            dirichlet_alpha=0.3,
             dirichlet_eps=0.25,
             rng=self._rng,
             add_root_noise=False,
