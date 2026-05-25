@@ -1,0 +1,59 @@
+# AlphaZero-Skull-King v1 — multi-GPU optimized for 4× RTX 4090
+#
+# Single GPU:
+#   python -m skull_king.training.alphazero.train --config configs/alphazero/alphazero_v1.yaml
+#
+# Multi-GPU (4 GPUs):
+#   torchrun --nproc_per_node=4 --master_port=29500 \
+#       -m skull_king.training.alphazero.train --config configs/alphazero/alphazero_v1.yaml
+#
+# With 4 ranks × 128 envs = 512 parallel games. Each iteration collects
+# 2048 seat-0 decisions per rank (≈ 32 full games), running 80 MCTS sims
+# per move. Effective game throughput ~30-60k self-play games/hour on
+# 4× 4090.
+#
+# Algorithm:
+#   - PUCT-MCTS with policy+value network
+#   - π_target = root visit-count distribution (with Dirichlet noise)
+#   - z_target = scaled per-round return-to-go in [-1, +1]
+#   - Cross-entropy + MSE loss; temperature schedule for exploration
+
+n_players: 4
+seed: 42
+
+# ── Training loop ───────────────────────────────────────────────────
+n_iterations: 3000
+collect_decisions: 2048
+n_envs: 128
+
+# ── MCTS ────────────────────────────────────────────────────────────
+n_simulations: 80
+eval_simulations: 100
+c_puct: 2.0
+dirichlet_alpha: 0.3
+dirichlet_eps: 0.25
+temperature_initial: 1.0
+temperature_final: 0.1
+temperature_drop_iter: 500
+
+# ── Network ─────────────────────────────────────────────────────────
+hidden: [1024, 1024, 512]
+value_hidden: 128
+
+# ── Optimization ────────────────────────────────────────────────────
+lr: 5.0e-4
+weight_decay: 1.0e-4
+batch_size: 4096
+train_steps: 80
+buffer_capacity: 1_000_000
+value_loss_weight: 1.0
+grad_clip: 1.0
+
+# ── Logging ─────────────────────────────────────────────────────────
+eval_every: 25
+checkpoint_every: 100
+model_dir: models/alphazero
+run_name: alphazero_v1_4090x4
+
+resume_from: ""
+start_iter: 1
