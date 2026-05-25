@@ -137,9 +137,14 @@ class VectorizedRunner:
             use_br_np = self._rng.random(N) < cfg.eta
             use_br_t  = torch.from_numpy(use_br_np).to(self.device)
 
+            # torch.compile w/ reduce-overhead uses CUDA graphs that reuse output
+            # buffers; mark step boundary so q_vals isn't overwritten by avg_lp.
+            if hasattr(torch.compiler, "cudagraph_mark_step_begin"):
+                torch.compiler.cudagraph_mark_step_begin()
+
             with torch.no_grad():
-                q_vals = q_net(enc_t, mask_t)         # [N, A]
-                avg_lp = avg_net(enc_t, mask_t)       # [N, A]
+                q_vals = q_net(enc_t, mask_t).clone()  # [N, A]  (clone: keep alive across next compile call)
+                avg_lp = avg_net(enc_t, mask_t)        # [N, A]
 
                 # BR branch: ε-greedy
                 #   argmax_a Q(s,a) over legal actions (illegal already -1e9)
