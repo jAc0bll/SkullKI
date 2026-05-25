@@ -31,11 +31,10 @@ collect_decisions: 4096
 n_envs: 512
 
 # ── MCTS ────────────────────────────────────────────────────────────
-# Training MCTS reduced to 10 sims for tractable iter time. The Python
-# game engine is the bottleneck (each MCTS sim drives the engine through
-# multiple opponent moves) — beyond ~10 sims iter time grows linearly
-# without proportionally improving the policy targets.
-n_simulations: 10
+# Benchmark on 1×4090: n_envs=512+n_sims=8 → 349 dec/s (vs 265 at n_sims=10).
+# Engine-driven simulations are the bottleneck; 8 sims is the practical
+# sweet spot keeping enough exploration for policy targets.
+n_simulations: 8
 eval_simulations: 50
 c_puct: 2.0
 dirichlet_alpha: 0.3
