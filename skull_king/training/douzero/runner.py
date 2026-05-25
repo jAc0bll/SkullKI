@@ -95,7 +95,8 @@ def _heuristic_action(eng: GameEngine, player: int, heur: HeuristicAgent) -> int
 class CurriculumRunner:
     """Vectorized runner with per-game opponent assignments."""
 
-    MAX_PEND = 80  # max seat-0 decisions per game (≤ 65 in worst case)
+    MAX_PEND = 80          # max seat-0 decisions per game (≤ 65 in worst case)
+    RETURN_SCALE = 100.0   # divides raw round-score sums into a Q-friendly range
 
     def __init__(
         self,
@@ -320,9 +321,9 @@ class CurriculumRunner:
         """Flush seat-0 transitions with per-round-shaped MC returns.
 
         For each transition at round r, the return-to-go is the seat-0
-        score earned in rounds r, r+1, ..., 10. This gives a much denser
-        learning signal than a single terminal game return spanning 65
-        decisions over 10 rounds.
+        score earned in rounds r, r+1, ..., 10, scaled to roughly [-3, +3]
+        so MSE targets aren't dominated by raw point magnitudes (a round
+        can score from -100 to +200+).
         """
         L = int(self._pend_lens[i])
         if L == 0:
@@ -330,13 +331,15 @@ class CurriculumRunner:
         eng = self.engines[i]
 
         # seat-0 per-round scores (1-indexed by round number)
-        score_history = eng._players[0].score_history  # list[RoundScore], length 10
+        score_history = eng._players[0].score_history  # list[RoundScore], length n_rounds
         round_scores = np.array(
             [rs.total_score for rs in score_history], dtype=np.float32
-        )                                                # shape [n_rounds]
-        # tail_scores[r] = sum of scores from round r+1..end (1-indexed r)
+        )
         tail = np.concatenate([round_scores, np.zeros(1, dtype=np.float32)])
-        cumtail = tail[::-1].cumsum()[::-1]              # cumtail[k] = sum(tail[k:])
+        cumtail = tail[::-1].cumsum()[::-1]               # cumtail[k] = sum(tail[k:])
+
+        # Normalize: 1 point ≈ 0.01 reward. Round wins ≈ ±0.5–2.0.
+        cumtail = cumtail / self.RETURN_SCALE
 
         encs    = self._pend_encs[i, :L]
         masks   = self._pend_masks[i, :L]
