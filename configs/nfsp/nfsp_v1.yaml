@@ -20,6 +20,7 @@ epsilon_decay: 1000
 
 # Networks
 hidden: [512, 512, 256]
+compile_nets: true       # torch.compile + CUDA Graphs via reduce-overhead mode
 
 # Q-net (best response)
 rl_lr: 1.0e-3

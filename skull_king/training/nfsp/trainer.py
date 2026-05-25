@@ -38,6 +38,11 @@ class NfspTrainer:
         self.cfg = cfg
         self.device = _pick_device()
 
+        # TF32 matmul on Ampere/Hopper/Blackwell — ~2x faster matmul, negligible accuracy loss
+        if self.device.type == "cuda":
+            torch.set_float32_matmul_precision("high")
+            torch.backends.cudnn.benchmark = True
+
         n = cfg.n_players
         pbs_size = pbs_encoding_size(n)
 
@@ -45,6 +50,13 @@ class NfspTrainer:
         self.avg_net = NfspAvgNet(n, hidden=tuple(cfg.hidden)).to(self.device)
         self.q_net.eval()
         self.avg_net.eval()
+
+        # torch.compile: fuses kernels and uses CUDA Graphs internally when shapes stable.
+        # `reduce-overhead` mode minimizes per-call launch overhead — perfect for the
+        # tight inference loop that fires once per game-step.
+        if cfg.compile_nets and self.device.type == "cuda":
+            self.q_net = torch.compile(self.q_net, mode="reduce-overhead", dynamic=True)
+            self.avg_net = torch.compile(self.avg_net, mode="reduce-overhead", dynamic=True)
 
         self.q_opt = torch.optim.Adam(self.q_net.parameters(), lr=cfg.rl_lr)
         self.avg_opt = torch.optim.Adam(self.avg_net.parameters(), lr=cfg.sl_lr)

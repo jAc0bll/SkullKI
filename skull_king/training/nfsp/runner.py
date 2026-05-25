@@ -46,15 +46,27 @@ class VectorizedRunner:
         self.n_players = n_players
         self.device = device
         self._rng = np.random.default_rng(seed)
-        self._init_envs()
-
-        # Pre-allocated numpy buffers — reused every step, avoids GC pressure
         pbs_size = pbs_encoding_size(n_players)
+        self._pbs_size = pbs_size
+
+        # Pre-allocated numpy buffers for the current step (one row per env)
         self._enc_buf  = np.empty((n_envs, pbs_size), dtype=np.float32)
         self._mask_buf = np.empty((n_envs, ACTION_SPACE_SIZE), dtype=bool)
+
         # Pre-allocated GPU tensors — avoids repeated from_numpy + .to(device)
         self._enc_t  = torch.empty((n_envs, pbs_size), dtype=torch.float32, device=device)
         self._mask_t = torch.empty((n_envs, ACTION_SPACE_SIZE), dtype=torch.bool, device=device)
+
+        # Per-env pending transitions stored in flat numpy arrays (no Python dicts).
+        # MAX_DECISIONS_PER_GAME = 4 players × ~65 decisions/player (worst case round 10).
+        MAX_PEND = 300
+        self._pend_encs    = np.empty((n_envs, MAX_PEND, pbs_size), dtype=np.float32)
+        self._pend_masks   = np.empty((n_envs, MAX_PEND, ACTION_SPACE_SIZE), dtype=bool)
+        self._pend_actions = np.empty((n_envs, MAX_PEND), dtype=np.int32)
+        self._pend_players = np.empty((n_envs, MAX_PEND), dtype=np.int8)
+        self._pend_lens    = np.zeros(n_envs, dtype=np.int32)
+
+        self._init_envs()
 
     def _init_envs(self) -> None:
         seeds = self._rng.integers(0, 2**31, size=self.n_envs)
@@ -63,8 +75,7 @@ class VectorizedRunner:
             eng = GameEngine(n_players=self.n_players, seed=int(s))
             eng.start()
             self.engines.append(eng)
-        # Per-game: list of (enc, mask, action, player_idx) accumulated during game
-        self._pending: list[list[dict]] = [[] for _ in range(self.n_envs)]
+        self._pend_lens[:] = 0
 
     # ------------------------------------------------------------------
 
@@ -167,13 +178,13 @@ class VectorizedRunner:
                 player = players[j]
                 action = int(actions_np[j])
 
-                # Store transition references (copy needed: enc_np/mask_np overwritten next step)
-                self._pending[i].append({
-                    "enc": enc_np[j].copy(),
-                    "mask": mask_np[j].copy(),
-                    "action": action,
-                    "player": player,
-                })
+                # Direct slice-assign into pre-allocated arrays — no dict, no allocation
+                k = self._pend_lens[i]
+                self._pend_encs[i, k]    = enc_np[j]
+                self._pend_masks[i, k]   = mask_np[j]
+                self._pend_actions[i, k] = action
+                self._pend_players[i, k] = player
+                self._pend_lens[i] = k + 1
 
                 try:
                     if eng._phase == GamePhase.BIDDING:
@@ -182,7 +193,7 @@ class VectorizedRunner:
                         card, tm = _action_to_card(action, eng)
                         eng.play_card_no_state(player, card, tm)
                 except Exception:
-                    self._pending[i].pop()
+                    self._pend_lens[i] = k     # roll back the just-stored transition
                     self._restart(i)
 
             total += N
@@ -191,26 +202,32 @@ class VectorizedRunner:
 
     def _flush(self, i: int, rl_buf: RLBuffer) -> None:
         """Assign MC returns to all transitions of game i and push to RL buffer."""
-        eng = self.engines[i]
-        transitions = self._pending[i]
-        if not transitions:
+        L = int(self._pend_lens[i])
+        if L == 0:
             return
 
+        eng = self.engines[i]
         scores = [p.total_score for p in eng._players]
-        n = len(transitions)
-        encs = np.stack([t["enc"] for t in transitions])
-        masks = np.stack([t["mask"] for t in transitions])
-        actions = np.array([t["action"] for t in transitions], dtype=np.int32)
-        returns = np.array(
-            [_utility_from_scores(scores, t["player"]) for t in transitions],
+
+        # Zero-copy views into the pre-allocated arrays
+        encs    = self._pend_encs[i, :L]
+        masks   = self._pend_masks[i, :L]
+        actions = self._pend_actions[i, :L]
+        players = self._pend_players[i, :L]
+
+        # Vectorized MC return assignment (per-player terminal utility)
+        per_player = np.array(
+            [_utility_from_scores(scores, p) for p in range(self.n_players)],
             dtype=np.float32,
         )
+        returns = per_player[players]  # gather: [L]
+
         rl_buf.add_batch(encs, masks, actions, returns)
-        self._pending[i] = []
+        self._pend_lens[i] = 0
 
     def _restart(self, i: int) -> None:
         seed = int(self._rng.integers(0, 2**31))
         eng = GameEngine(n_players=self.n_players, seed=seed)
         eng.start()
         self.engines[i] = eng
-        self._pending[i] = []
+        self._pend_lens[i] = 0
