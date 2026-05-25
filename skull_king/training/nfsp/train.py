@@ -33,6 +33,7 @@ class NfspConfig:
     # Networks
     hidden: list = field(default_factory=lambda: [512, 512, 256])
     compile_nets: bool = True     # torch.compile both nets (CUDA only)
+    eval_br: bool = True          # also evaluate the BR (Q-net) policy each eval
 
     # Q-net (RL / best response)
     rl_lr: float = 1e-3

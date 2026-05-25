@@ -243,22 +243,45 @@ class NfspTrainer:
     def _evaluate(self, t: int) -> None:
         from skull_king.training.nfsp.agent import NfspAgent
         n = self.cfg.n_players
-        # Use the EAGER (uncompiled) avg-net for eval: tournament play is batch-size 1
-        # per decision, which would trigger torch.compile recompilation storms.
-        agent = NfspAgent(self._avg_net_eager, n_players=n, name="NFSP", device=self.device)
         runner = TournamentRunner(seed=999)
-        r_r = runner.run([agent] + [RandomAgent(i) for i in range(n - 1)], n_games=200)
-        r_h = runner.run([agent] + [HeuristicAgent() for _ in range(n - 1)], n_games=200)
-        wr_r = r_r.win_rates().get("NFSP", 0.0)
-        wr_h = r_h.win_rates().get("NFSP", 0.0)
-        avg_r = r_r.avg_scores().get("NFSP", 0.0)
-        avg_h = r_h.avg_scores().get("NFSP", 0.0)
+
+        def _run(mode: str) -> tuple[float, float, float, float]:
+            # Use EAGER nets — tournament play has batch=1 which triggers
+            # torch.compile recompile storms under reduce-overhead mode.
+            agent = NfspAgent(
+                avg_net=self._avg_net_eager,
+                q_net=self._q_net_eager,
+                n_players=n,
+                name="NFSP",
+                device=self.device,
+                mode=mode,
+            )
+            r_r = runner.run([agent] + [RandomAgent(i) for i in range(n - 1)], n_games=200)
+            r_h = runner.run([agent] + [HeuristicAgent() for _ in range(n - 1)], n_games=200)
+            return (
+                r_r.win_rates().get("NFSP", 0.0),
+                r_r.avg_scores().get("NFSP", 0.0),
+                r_h.win_rates().get("NFSP", 0.0),
+                r_h.avg_scores().get("NFSP", 0.0),
+            )
+
+        # Average-strategy eval (the final NFSP policy)
+        wr_r, av_r, wr_h, av_h = _run("avg")
         print(
-            f"  [EVAL iter={t}]"
-            f"  vs_random={wr_r:.1%} ({avg_r:+.0f})"
-            f"  vs_heuristic={wr_h:.1%} ({avg_h:+.0f})",
+            f"  [EVAL iter={t} avg]"
+            f"  vs_random={wr_r:.1%} ({av_r:+.0f})"
+            f"  vs_heuristic={wr_h:.1%} ({av_h:+.0f})",
             flush=True,
         )
+        # Best-response eval (diagnostic — should usually be stronger than avg)
+        if self.cfg.eval_br and self._q_net_eager is not None:
+            wr_r2, av_r2, wr_h2, av_h2 = _run("br")
+            print(
+                f"  [EVAL iter={t} br ]"
+                f"  vs_random={wr_r2:.1%} ({av_r2:+.0f})"
+                f"  vs_heuristic={wr_h2:.1%} ({av_h2:+.0f})",
+                flush=True,
+            )
 
     def _save(self, base_path: str) -> None:
         torch.save(self.q_net.state_dict(), f"{base_path}_q.pt")

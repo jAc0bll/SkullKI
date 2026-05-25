@@ -20,15 +20,23 @@ class NfspAgent(BaseAgent):
     def __init__(
         self,
         avg_net,
+        q_net=None,
         n_players: int = 4,
         name: str = "NFSP",
         device: torch.device | None = None,
+        mode: str = "avg",   # 'avg' = average strategy (default), 'br' = best response (Q-net)
     ) -> None:
         self.avg_net = avg_net
+        self.q_net = q_net
         self.n_players = n_players
         self._name = name
         self.device = device or next(avg_net.parameters()).device
+        self.mode = mode
+        if mode == "br" and q_net is None:
+            raise ValueError("mode='br' requires q_net")
         self.avg_net.eval()
+        if q_net is not None:
+            q_net.eval()
         self._engine = None
 
     @property
@@ -53,7 +61,12 @@ class NfspAgent(BaseAgent):
         pbs = PublicBeliefState.from_engine(self._engine, player_index)
         enc = torch.from_numpy(pbs.encode()).float().unsqueeze(0).to(self.device)
         mask_t = torch.from_numpy(mask).bool().unsqueeze(0).to(self.device)
-        with torch.no_grad():
-            log_probs = self.avg_net(enc, mask_t).squeeze(0).cpu().numpy()
         legal = np.where(mask)[0]
-        return int(legal[np.argmax(log_probs[legal])])
+        with torch.no_grad():
+            if self.mode == "br":
+                # Best-response policy: greedy over Q-values
+                scores = self.q_net(enc, mask_t).squeeze(0).cpu().numpy()
+            else:
+                # Average policy: greedy over log-probs
+                scores = self.avg_net(enc, mask_t).squeeze(0).cpu().numpy()
+        return int(legal[np.argmax(scores[legal])])

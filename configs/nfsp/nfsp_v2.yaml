@@ -1,0 +1,55 @@
+# NFSP v2 — fixes from v1 post-mortem
+#
+# v1 (run completed, 2000 iters):
+#   vs_random=81% plateau   vs_heuristic=1%   SL loss 0.10 → 0.68 (diverged)
+#
+# v1 bugs fixed in v2:
+#   - SLBuffer now uses Reservoir Sampling (Vitter R), not FIFO.
+#     The FIFO buffer turned over every ~600 iters, so the avg-net was
+#     always chasing the latest BR policy instead of converging to the
+#     true average. This is *the* canonical NFSP buffer requirement.
+#   - Eval now also reports BR (Q-net) win-rate alongside Avg.
+#   - Networks scaled up to [1024, 1024, 512] for more capacity.
+#   - epsilon decay stretched (1000 → 1500) + higher floor (0.01).
+#   - SL train rate halved (300 → 150 steps) so the avg-net doesn't
+#     over-fit the very latest reservoir contents.
+
+n_players: 4
+seed: 42
+
+# Collection
+n_iterations: 3000          # longer run — v1 plateau'd by 1000 but Avg loss never converged
+collect_steps: 32768
+n_envs: 2048
+
+# NFSP
+eta: 0.1
+epsilon_start: 0.08
+epsilon_end: 0.01            # higher floor — v1 dropped to 0.001 = no exploration
+epsilon_decay: 1500          # stretched decay over more iters
+
+# Networks
+hidden: [1024, 1024, 512]    # +3x params for more game-strategy capacity
+compile_nets: true
+eval_br: true                # diagnostic — see if Q-net (BR) outperforms Avg
+
+# Q-net (best response)
+rl_lr: 5.0e-4                # slightly lower — v1 RL loss climbed late
+rl_batch_size: 4096
+rl_train_steps: 300
+rl_buffer_capacity: 1_000_000
+
+# Avg-net (average strategy)
+sl_lr: 5.0e-4
+sl_batch_size: 4096
+sl_train_steps: 150          # halved — avoid over-fitting the reservoir
+sl_buffer_capacity: 3_000_000  # bigger reservoir for finer historical average
+
+# Logging
+eval_every: 50
+checkpoint_every: 250
+model_dir: models/nfsp
+run_name: nfsp_v2_4090
+
+resume_from: ""
+start_iter: 1
