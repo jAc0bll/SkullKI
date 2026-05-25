@@ -22,15 +22,21 @@ n_players: 4
 seed: 42
 
 # ── Training loop ───────────────────────────────────────────────────
+# n_envs=512 + n_sims=10 is the sweet spot per single-GPU benchmark:
+# 512 envs gives big GPU batches; 10 sims keeps engine work tractable
+# (each MCTS sim runs the Python game engine many times — that's the
+# real bottleneck, not GPU compute).
 n_iterations: 3000
-collect_decisions: 2048
-n_envs: 128
+collect_decisions: 4096
+n_envs: 512
 
 # ── MCTS ────────────────────────────────────────────────────────────
-# 80 sims/move was 115s/iter on 4× 4090 — bottlenecked by per-sim Python
-# overhead. 25 sims gives ~3× faster iters with still-meaningful search.
-n_simulations: 25
-eval_simulations: 80
+# Training MCTS reduced to 10 sims for tractable iter time. The Python
+# game engine is the bottleneck (each MCTS sim drives the engine through
+# multiple opponent moves) — beyond ~10 sims iter time grows linearly
+# without proportionally improving the policy targets.
+n_simulations: 10
+eval_simulations: 50
 c_puct: 2.0
 dirichlet_alpha: 0.3
 dirichlet_eps: 0.25
