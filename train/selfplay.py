@@ -53,9 +53,24 @@ _use_belief = False
 
 def _init_worker(model_path: str, num_sims: int, belief_path: str | None,
                  use_nn_value: bool, device: str) -> None:
+    # Limit math-library threads to 1 BEFORE importing torch/skullking.
+    # OpenMP/MKL/OpenBLAS otherwise spawn cpu_count threads PER worker,
+    # which devastates throughput when you also have many workers.
+    for var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS",
+                "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ[var] = "1"
+
     _add_torch_dll_dir()
     sys.path.insert(0, str(REPO_ROOT / "build" / "python"))
     import skullking as sk
+
+    # Belt-and-suspenders: also pin LibTorch's intra-op pool to 1
+    # (TorchModelEvaluator does this in C++ too).
+    try:
+        import torch
+        torch.set_num_threads(1)
+    except Exception:
+        pass
 
     global _sk, _agent, _evaluator, _belief, _use_belief
     _sk = sk

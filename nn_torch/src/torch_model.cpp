@@ -18,6 +18,17 @@ struct TorchModelEvaluator::Impl {
 TorchModelEvaluator::TorchModelEvaluator(const std::string& path,
                                          const std::string& device)
 {
+    // Critical for multi-process selfplay: pin LibTorch to ONE thread per
+    // process. Without this, each worker spawns ~cpu_count threads for
+    // intra-op parallelism on every matmul. 24 workers × 14 threads on a
+    // 224-core box = ~336 contended threads, load average explodes, nothing
+    // makes progress.
+    torch::set_num_threads(1);
+    try { torch::set_num_interop_threads(1); } catch (const c10::Error&) {
+        // set_num_interop_threads must be called before any parallel op;
+        // calling it twice in the same process throws. Ignore.
+    }
+
     torch::Device dev = torch::kCPU;
     if (device == "cuda" || device.rfind("cuda:", 0) == 0) {
         if (!torch::cuda::is_available()) {
