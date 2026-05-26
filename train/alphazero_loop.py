@@ -114,11 +114,22 @@ def selfplay_step(workdir: Path, iter_dir: Path, best_scripted: Path,
     return out
 
 
-def train_step(iter_dir: Path, data: Path, init_ckpt: Path, epochs: int,
+def collect_replay_window(workdir: Path, current_iter: int, window: int) -> list[Path]:
+    """Return up-to-`window` most recent selfplay.npz shards, oldest -> newest.
+    Skips iterations whose npz is missing (e.g. interrupted iters)."""
+    paths: list[Path] = []
+    for i in range(max(1, current_iter - window + 1), current_iter + 1):
+        p = workdir / f"iter_{i:03d}" / "selfplay.npz"
+        if p.exists():
+            paths.append(p)
+    return paths
+
+
+def train_step(iter_dir: Path, data_shards: list[Path], init_ckpt: Path, epochs: int,
                batch_size: int, lr: float, hidden: int, device: str) -> Path:
     out = iter_dir / "candidate.pt"
     cmd = [sys.executable, str(REPO_ROOT / "train" / "train.py"),
-           "--data",       str(data.relative_to(REPO_ROOT)),
+           "--data",       *[str(p.relative_to(REPO_ROOT)) for p in data_shards],
            "--out",        str(out.relative_to(REPO_ROOT)),
            "--init",       str(init_ckpt.relative_to(REPO_ROOT)),
            "--epochs",     str(epochs),
@@ -213,9 +224,22 @@ def main():
     ap.add_argument("--train-batch",    type=int,   default=2048)
     ap.add_argument("--train-lr",       type=float, default=1e-3)
     ap.add_argument("--train-hidden",   type=int,   default=1024)
+    ap.add_argument("--replay-iters",   type=int,   default=1,
+                    help="Train on the npz shards from the last N iterations (rolling window). "
+                         "1 = train only on the freshest shard (legacy behaviour). "
+                         "Higher (e.g. 5) gives more samples per train step and stabilises "
+                         "training as the model grows.")
     ap.add_argument("--gate-games",     type=int,   default=80)
     ap.add_argument("--gate-sims",      type=int,   default=100)
-    ap.add_argument("--gate-winrate",   type=float, default=0.55)
+    ap.add_argument("--gate-winrate",   type=float, default=0.30,
+                    help="Min win-rate of the single candidate seat against 3 best seats. "
+                         "Random baseline (equal-strength) is 0.25 in this 1-vs-3 layout — "
+                         "0.30 is a moderate-overhead signal. Was 0.55 before, which is "
+                         "unattainable in 1-vs-3 even for clearly stronger models.")
+    ap.add_argument("--gate-margin",    type=float, default=0.0,
+                    help="Min (candidate_avg_score - best_avg_score) over the eval games. "
+                         "Used together with --gate-winrate: candidate must clear both. "
+                         "0.0 = any non-negative improvement passes; raise to combat noise.")
     ap.add_argument("--device",         default="cuda" if Path("/proc/driver/nvidia").exists() else "cpu",
                     help="Device for training and eval-gate")
     ap.add_argument("--selfplay-device", default="cpu",
@@ -278,7 +302,10 @@ def main():
         t_sp = time.perf_counter() - t0
 
         t0 = time.perf_counter()
-        cand_ckpt = train_step(iter_dir, sp_path, best_ckpt,
+        shards = collect_replay_window(workdir, it, args.replay_iters)
+        total = sum(p.stat().st_size for p in shards) / 1e6
+        print(f"\nReplay window: {len(shards)} shard(s), {total:.1f} MB total")
+        cand_ckpt = train_step(iter_dir, shards, best_ckpt,
                                args.train_epochs, args.train_batch, args.train_lr,
                                args.train_hidden, args.device)
         cand_scripted = export_step(cand_ckpt, iter_dir / "candidate.scripted.pt")
@@ -289,13 +316,16 @@ def main():
                                                 args.gate_games, args.gate_sims, args.device)
         t_ev = time.perf_counter() - t0
 
-        promoted = winrate >= args.gate_winrate
+        score_diff = cand_avg - best_avg
+        promoted = (winrate >= args.gate_winrate) and (score_diff >= args.gate_margin)
+        gate_str = (f"winrate {winrate*100:.1f}% (need ≥ {args.gate_winrate*100:.0f}%) | "
+                    f"Δscore {score_diff:+.2f} (need ≥ {args.gate_margin:+.2f})")
         if promoted:
             shutil.copy(cand_ckpt,     best_ckpt)
             shutil.copy(cand_scripted, best_scripted)
-            print(f"\n[PROMOTE] new best (winrate {winrate*100:.1f}% ≥ {args.gate_winrate*100:.0f}%)")
+            print(f"\n[PROMOTE] new best — {gate_str}")
         else:
-            print(f"\n[REJECT]  winrate {winrate*100:.1f}% < {args.gate_winrate*100:.0f}% — keep previous best")
+            print(f"\n[REJECT]  keep previous best — {gate_str}")
 
         stats = IterStats(
             iteration=it,
