@@ -41,33 +41,42 @@ def load_dataset(paths):
 
 
 def train_one_epoch(model, loader, optim, device, value_weight: float,
-                    epoch: int | None = None, total_epochs: int | None = None):
+                    scaler=None, epoch: int | None = None,
+                    total_epochs: int | None = None):
+    """If `scaler` is a GradScaler, runs forward+backward under autocast
+    (mixed precision). Otherwise plain FP32."""
     model.train()
     total_pol, total_val, n = 0.0, 0.0, 0
     n_batches = len(loader)
-    # Log roughly every 5% of the epoch, but cap at 50 lines for short epochs.
     log_every = max(1, n_batches // 20)
     tag = f"epoch {epoch:>3}/{total_epochs}" if epoch is not None else "train"
     t_start = time.perf_counter()
+    use_amp = scaler is not None
     for i, (feats, policy_t, legal, value_t) in enumerate(loader, 1):
         feats    = feats.to(device, non_blocking=True)
         policy_t = policy_t.to(device, non_blocking=True)
         legal    = legal.to(device, non_blocking=True)
         value_t  = value_t.to(device, non_blocking=True)
 
-        policy_logits, value_pred = model(feats)
-        log_probs = masked_log_softmax(policy_logits, legal)
-
-        # Masked cross-entropy: -sum_a target(a) * log_p(a), where target=0 on illegal.
-        # Replace any -inf where target is 0 with 0 contribution.
-        ce = -(policy_t * log_probs.clamp_min(-100.0)).sum(dim=-1).mean()
-        mse = F.mse_loss(value_pred, value_t)
-
-        loss = ce + value_weight * mse
         optim.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-        optim.step()
+        with torch.amp.autocast(device_type="cuda", enabled=use_amp):
+            policy_logits, value_pred = model(feats)
+            # log-softmax in fp32 for numerical stability under fp16 logits.
+            log_probs = masked_log_softmax(policy_logits.float(), legal)
+            ce  = -(policy_t * log_probs.clamp_min(-100.0)).sum(dim=-1).mean()
+            mse = F.mse_loss(value_pred.float(), value_t)
+            loss = ce + value_weight * mse
+
+        if use_amp:
+            scaler.scale(loss).backward()
+            scaler.unscale_(optim)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+            scaler.step(optim)
+            scaler.update()
+        else:
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+            optim.step()
 
         bs = feats.size(0)
         total_pol += ce.item() * bs
@@ -85,18 +94,20 @@ def train_one_epoch(model, loader, optim, device, value_weight: float,
 
 
 @torch.no_grad()
-def eval_split(model, loader, device, value_weight: float):
+def eval_split(model, loader, device, value_weight: float, use_amp: bool = False):
     model.eval()
     total_pol, total_val, top1_correct, n = 0.0, 0.0, 0, 0
     for feats, policy_t, legal, value_t in loader:
-        feats    = feats.to(device); policy_t = policy_t.to(device)
-        legal    = legal.to(device); value_t  = value_t.to(device)
+        feats    = feats.to(device, non_blocking=True)
+        policy_t = policy_t.to(device, non_blocking=True)
+        legal    = legal.to(device, non_blocking=True)
+        value_t  = value_t.to(device, non_blocking=True)
 
-        policy_logits, value_pred = model(feats)
-        log_probs = masked_log_softmax(policy_logits, legal)
-
+        with torch.amp.autocast(device_type="cuda", enabled=use_amp):
+            policy_logits, value_pred = model(feats)
+        log_probs = masked_log_softmax(policy_logits.float(), legal)
         ce  = -(policy_t * log_probs.clamp_min(-100.0)).sum(dim=-1).mean()
-        mse = F.mse_loss(value_pred, value_t)
+        mse = F.mse_loss(value_pred.float(), value_t)
 
         # Top-1 agreement with ISMCTS argmax on legal moves
         teacher_argmax = policy_t.argmax(dim=-1)
@@ -135,7 +146,15 @@ def main():
     ap.add_argument("--dropout",     type=float, default=0.0)
     ap.add_argument("--device",      type=str,   default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--seed",        type=int,   default=0)
+    ap.add_argument("--num-workers", type=int,   default=4,
+                    help="DataLoader worker processes. Overlaps host-side shuffling "
+                         "and pinned-memory transfer with GPU compute.")
+    ap.add_argument("--amp",         action=argparse.BooleanOptionalAction, default=None,
+                    help="Mixed precision (fp16 autocast + GradScaler). "
+                         "Default: on for cuda, off otherwise. Use --no-amp to force off.")
     args = ap.parse_args()
+    if args.amp is None:
+        args.amp = args.device.startswith("cuda")
 
     repo_root = Path(__file__).resolve().parent.parent
     data_paths = [repo_root / d for d in args.data]
@@ -165,8 +184,14 @@ def main():
     val_ds   = TensorDataset(feats[val_idx],   policy[val_idx],   legal[val_idx],   value[val_idx])
 
     pin = (args.device != "cpu")
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  pin_memory=pin)
-    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, pin_memory=pin)
+    nw  = args.num_workers
+    persistent = nw > 0
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+                              pin_memory=pin, num_workers=nw,
+                              persistent_workers=persistent)
+    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False,
+                              pin_memory=pin, num_workers=nw,
+                              persistent_workers=persistent)
 
     model = build_model(args.arch, hidden=args.hidden,
                         num_blocks=args.num_blocks, dropout=args.dropout).to(args.device)
@@ -186,17 +211,20 @@ def main():
         print(f"Warm-start from {init_path}")
     optim = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
+    scaler = torch.amp.GradScaler("cuda") if args.amp else None
 
     n_params = sum(p.numel() for p in model.parameters())
     arch_desc = f"arch={args.arch} hidden={args.hidden}"
     if args.arch == "v2":
         arch_desc += f" num_blocks={args.num_blocks} dropout={args.dropout}"
     print(f"Model: {n_params/1e6:.2f}M params ({arch_desc})")
-    print(f"Train: {len(train_idx):,}  Val: {len(val_idx):,}\n")
+    print(f"Train: {len(train_idx):,}  Val: {len(val_idx):,}  "
+          f"DataLoader workers: {nw}  AMP: {'on' if args.amp else 'off'}\n")
 
     # Establish baseline (so a warm-started model that gets worse during training
     # still leaves the original at --out, and the loop doesn't crash on missing file).
-    init_val_pol, init_val_v, init_top1 = eval_split(model, val_loader, args.device, args.value_weight)
+    init_val_pol, init_val_v, init_top1 = eval_split(model, val_loader, args.device, args.value_weight,
+                                                     use_amp=args.amp)
     print(f"epoch   0/{args.epochs}  init                            "
           f"val pol={init_val_pol:.4f} val={init_val_v:.4f}  top1={init_top1*100:5.2f}%")
     torch.save({"model": model.state_dict(),
@@ -210,15 +238,19 @@ def main():
     for epoch in range(1, args.epochs + 1):
         t0 = time.perf_counter()
         tr_pol, tr_val = train_one_epoch(model, train_loader, optim, args.device, args.value_weight,
-                                         epoch=epoch, total_epochs=args.epochs)
-        va_pol, va_val, va_top1 = eval_split(model, val_loader, args.device, args.value_weight)
+                                         scaler=scaler, epoch=epoch, total_epochs=args.epochs)
+        va_pol, va_val, va_top1 = eval_split(model, val_loader, args.device, args.value_weight,
+                                             use_amp=args.amp)
         sched.step()
 
         marker = ""
         if va_pol < best_val_pol:
             best_val_pol = va_pol
             torch.save({"model": model.state_dict(),
+                        "arch": args.arch,
                         "hidden": args.hidden,
+                        "num_blocks": args.num_blocks,
+                        "dropout": args.dropout,
                         "enc_dim": ENC_DIM,
                         "action_dim": ACTION_DIM}, out_path)
             marker = " *"
