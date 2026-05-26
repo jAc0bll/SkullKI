@@ -206,14 +206,16 @@ ISMCTSResult NeuralMCTSAgent::selectActionWithTargets(
                         }
                     } else {
                         // Hybrid: random rollout to round end for leaf value.
-                        GameState sim = state;
-                        while (!isHorizonEnd(sim, obs.roundNumber)) {
-                            const auto la = legalActions(sim);
-                            std::uniform_int_distribution<int> dist(0, static_cast<int>(la.size()) - 1);
-                            applyAction(sim, la[dist(rng)]);
+                        GameState rolloutState = state;
+                        while (!isHorizonEnd(rolloutState, obs.roundNumber)) {
+                            const auto rolloutLegals = legalActions(rolloutState);
+                            std::uniform_int_distribution<int> dist(
+                                0, static_cast<int>(rolloutLegals.size()) - 1);
+                            applyAction(rolloutState, rolloutLegals[dist(rng)]);
                         }
                         for (int p = 0; p < N_PLAYERS; ++p) {
-                            reward[p] = static_cast<double>(sim.scores[p] - baseline[p]);
+                            reward[p] = static_cast<double>(
+                                rolloutState.scores[p] - baseline[p]);
                         }
                     }
                 }
