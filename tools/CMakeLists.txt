@@ -10,4 +10,8 @@ if(SK_BUILD_TORCH AND TARGET sk_torch)
     add_executable(benchmark_async benchmark_async.cpp)
     target_link_libraries(benchmark_async PRIVATE sk_engine sk_torch)
     target_compile_features(benchmark_async PRIVATE cxx_std_20)
+
+    add_executable(selfplay_az selfplay_az.cpp)
+    target_link_libraries(selfplay_az PRIVATE sk_engine sk_torch)
+    target_compile_features(selfplay_az PRIVATE cxx_std_20)
 endif()
