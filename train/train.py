@@ -92,6 +92,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data",        type=str,   default="train/data/selfplay.npz")
     ap.add_argument("--out",         type=str,   default="train/checkpoints/bc.pt")
+    ap.add_argument("--init",        type=str,   default="",
+                    help="Optional PyTorch checkpoint to warm-start from. "
+                         "Must match --hidden. Used by AlphaZero loop to inherit "
+                         "the previous best model instead of re-training from scratch.")
     ap.add_argument("--epochs",      type=int,   default=20)
     ap.add_argument("--batch-size",  type=int,   default=1024)
     ap.add_argument("--lr",          type=float, default=1e-3)
@@ -130,6 +134,17 @@ def main():
     val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, pin_memory=pin)
 
     model = PolicyValueNet(hidden=args.hidden).to(args.device)
+    if args.init:
+        init_path = repo_root / args.init
+        ck = torch.load(init_path, map_location=args.device, weights_only=False)
+        sd = ck["model"] if isinstance(ck, dict) and "model" in ck else ck
+        ck_hidden = ck.get("hidden") if isinstance(ck, dict) else None
+        if ck_hidden is not None and ck_hidden != args.hidden:
+            raise ValueError(
+                f"--init hidden={ck_hidden} mismatches --hidden {args.hidden}. "
+                f"Either pass the matching --hidden or retrain from scratch.")
+        model.load_state_dict(sd)
+        print(f"Warm-start from {init_path}")
     optim = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
 
@@ -137,7 +152,16 @@ def main():
     print(f"Model: {n_params/1e6:.2f}M params (hidden={args.hidden})")
     print(f"Train: {len(train_idx):,}  Val: {len(val_idx):,}\n")
 
-    best_val_pol = float("inf")
+    # Establish baseline (so a warm-started model that gets worse during training
+    # still leaves the original at --out, and the loop doesn't crash on missing file).
+    init_val_pol, init_val_v, init_top1 = eval_split(model, val_loader, args.device, args.value_weight)
+    print(f"epoch   0/{args.epochs}  init                            "
+          f"val pol={init_val_pol:.4f} val={init_val_v:.4f}  top1={init_top1*100:5.2f}%")
+    torch.save({"model": model.state_dict(),
+                "hidden": args.hidden,
+                "enc_dim": ENC_DIM,
+                "action_dim": ACTION_DIM}, out_path)
+    best_val_pol = init_val_pol
     for epoch in range(1, args.epochs + 1):
         t0 = time.perf_counter()
         tr_pol, tr_val = train_one_epoch(model, train_loader, optim, args.device, args.value_weight)

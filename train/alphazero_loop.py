@@ -117,13 +117,10 @@ def selfplay_step(workdir: Path, iter_dir: Path, best_scripted: Path,
 def train_step(iter_dir: Path, data: Path, init_ckpt: Path, epochs: int,
                batch_size: int, lr: float, hidden: int, device: str) -> Path:
     out = iter_dir / "candidate.pt"
-    # Warm-start: we copy the init_ckpt to a "warmstart.pt" and let train.py
-    # randomly initialise on top — current train.py doesn't support
-    # warm-start, so for now we just re-train from scratch each iteration.
-    # TODO: add --init flag to train.py for true warm-start.
     cmd = [sys.executable, str(REPO_ROOT / "train" / "train.py"),
            "--data",       str(data.relative_to(REPO_ROOT)),
            "--out",        str(out.relative_to(REPO_ROOT)),
+           "--init",       str(init_ckpt.relative_to(REPO_ROOT)),
            "--epochs",     str(epochs),
            "--batch-size", str(batch_size),
            "--lr",         str(lr),
