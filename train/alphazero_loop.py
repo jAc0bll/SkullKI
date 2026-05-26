@@ -198,8 +198,24 @@ def main():
     ap.add_argument("--gate-games",     type=int,   default=80)
     ap.add_argument("--gate-sims",      type=int,   default=100)
     ap.add_argument("--gate-winrate",   type=float, default=0.55)
-    ap.add_argument("--device",         default="cuda" if Path("/proc/driver/nvidia").exists() else "cpu")
+    ap.add_argument("--device",         default="cuda" if Path("/proc/driver/nvidia").exists() else "cpu",
+                    help="Device for training and eval-gate")
+    ap.add_argument("--selfplay-device", default="cpu",
+                    help="Device for selfplay. Default cpu — each worker creates its own CUDA "
+                         "context (~500 MB VRAM each), so cuda + many workers OOMs the GPU. "
+                         "At our model size single-sample inference is not faster on GPU anyway.")
     args = ap.parse_args()
+
+    # Worker sanity check — too many workers thrash RAM and L3 cache without helping.
+    # Each worker holds its own model copy (~30 MB) plus tree state (~MBs).
+    import os as _os
+    cpu_count = _os.cpu_count() or 1
+    if args.workers > cpu_count:
+        print(f"[warn] --workers {args.workers} > os.cpu_count() {cpu_count}; capping to {cpu_count}")
+        args.workers = cpu_count
+    if args.workers > 32 and args.selfplay_device == "cuda":
+        print(f"[warn] --workers {args.workers} with --selfplay-device cuda will likely OOM the GPU "
+              f"(each worker creates its own ~500 MB CUDA context). Consider --selfplay-device cpu.")
 
     workdir = (REPO_ROOT / args.workdir).resolve()
     workdir.mkdir(parents=True, exist_ok=True)
@@ -223,7 +239,7 @@ def main():
         t0 = time.perf_counter()
         sp_path = selfplay_step(workdir, iter_dir, best_scripted,
                                 args.selfplay_games, args.selfplay_sims,
-                                args.workers, args.device)
+                                args.workers, args.selfplay_device)
         t_sp = time.perf_counter() - t0
 
         t0 = time.perf_counter()
