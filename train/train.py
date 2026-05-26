@@ -40,10 +40,16 @@ def load_dataset(paths):
     return feats, policy, legal, value
 
 
-def train_one_epoch(model, loader, optim, device, value_weight: float):
+def train_one_epoch(model, loader, optim, device, value_weight: float,
+                    epoch: int | None = None, total_epochs: int | None = None):
     model.train()
     total_pol, total_val, n = 0.0, 0.0, 0
-    for feats, policy_t, legal, value_t in loader:
+    n_batches = len(loader)
+    # Log roughly every 5% of the epoch, but cap at 50 lines for short epochs.
+    log_every = max(1, n_batches // 20)
+    tag = f"epoch {epoch:>3}/{total_epochs}" if epoch is not None else "train"
+    t_start = time.perf_counter()
+    for i, (feats, policy_t, legal, value_t) in enumerate(loader, 1):
         feats    = feats.to(device, non_blocking=True)
         policy_t = policy_t.to(device, non_blocking=True)
         legal    = legal.to(device, non_blocking=True)
@@ -67,6 +73,14 @@ def train_one_epoch(model, loader, optim, device, value_weight: float):
         total_pol += ce.item() * bs
         total_val += mse.item() * bs
         n += bs
+        if i % log_every == 0 or i == n_batches:
+            pct  = i / n_batches * 100
+            secs = time.perf_counter() - t_start
+            eta  = secs / i * (n_batches - i)
+            print(f"  {tag}  {i:>5}/{n_batches}  ({pct:5.1f}%)  "
+                  f"pol={total_pol/n:.4f}  val={total_val/n:.4f}  "
+                  f"{secs:5.1f}s  eta {eta:5.1f}s",
+                  flush=True)
     return total_pol / n, total_val / n
 
 
@@ -195,7 +209,8 @@ def main():
     best_val_pol = init_val_pol
     for epoch in range(1, args.epochs + 1):
         t0 = time.perf_counter()
-        tr_pol, tr_val = train_one_epoch(model, train_loader, optim, args.device, args.value_weight)
+        tr_pol, tr_val = train_one_epoch(model, train_loader, optim, args.device, args.value_weight,
+                                         epoch=epoch, total_epochs=args.epochs)
         va_pol, va_val, va_top1 = eval_split(model, val_loader, args.device, args.value_weight)
         sched.step()
 
