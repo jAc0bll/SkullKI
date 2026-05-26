@@ -22,6 +22,10 @@ apt-get install -y --no-install-recommends \
     build-essential cmake ninja-build git curl ca-certificates htop tmux
 
 echo
+echo "=== ensuring tqdm (for progress bars) is installed ==="
+python -m pip install --quiet tqdm
+
+echo
 echo "=== python + torch sanity ==="
 python -c "
 import torch

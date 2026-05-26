@@ -21,6 +21,12 @@ from pathlib import Path
 
 import numpy as np
 
+try:
+    from tqdm import tqdm
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -164,12 +170,15 @@ def main() -> None:
     init_args = (str(REPO_ROOT / args.model), args.sims,
                  str(REPO_ROOT / args.belief) if args.belief else None,
                  args.use_nn_value, args.device)
+    bar = (lambda it, total: tqdm(it, total=total, desc='selfplay', unit='game', dynamic_ncols=True)) \
+          if HAS_TQDM else (lambda it, total: it)
+
     if args.workers == 1:
         _init_worker(*init_args)
-        results = [_run_one(s) for s in seeds]
+        results = list(bar((_run_one(s) for s in seeds), len(seeds)))
     else:
         with mp.Pool(args.workers, initializer=_init_worker, initargs=init_args) as pool:
-            results = pool.map(_run_one, seeds)
+            results = list(bar(pool.imap_unordered(_run_one, seeds), len(seeds)))
 
     feats       = np.concatenate([r[0] for r in results], axis=0)
     policy      = np.concatenate([r[1] for r in results], axis=0)

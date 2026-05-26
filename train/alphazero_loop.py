@@ -42,6 +42,12 @@ import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
+try:
+    from tqdm import tqdm
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -144,6 +150,8 @@ def eval_gate(candidate_scripted: Path, best_scripted: Path, games: int,
     cand_score = best_score = 0
     cand_wins = 0
     cand_seats = best_seats = 0
+
+    pbar = tqdm(total=total, desc='eval-gate', unit='game', dynamic_ncols=True) if HAS_TQDM else None
     for rot in range(rotations):
         cand_seat = rot
         lineup = [best] * sk.N_PLAYERS
@@ -163,6 +171,12 @@ def eval_gate(candidate_scripted: Path, best_scripted: Path, games: int,
                     cand_score += scores[p]; cand_seats += 1
                 else:
                     best_score += scores[p]; best_seats += 1
+            if pbar is not None:
+                wr = cand_wins / max(1, cand_seats)
+                pbar.set_postfix(cand_wr=f"{wr*100:5.1f}%")
+                pbar.update(1)
+    if pbar is not None:
+        pbar.close()
     winrate     = cand_wins / total
     cand_avg    = cand_score / cand_seats
     best_avg    = best_score / best_seats
@@ -198,10 +212,13 @@ def main():
         shutil.copy(args.init, best_ckpt)
         export_step(best_ckpt, best_scripted)
 
+    overall_t0 = time.perf_counter()
     for it in range(1, args.iterations + 1):
         iter_dir = workdir / f"iter_{it:03d}"
         iter_dir.mkdir(parents=True, exist_ok=True)
-        print(f"\n========== Iteration {it}/{args.iterations} ==========")
+        elapsed_h = (time.perf_counter() - overall_t0) / 3600
+        print(f"\n========== Iteration {it}/{args.iterations}  "
+              f"(wallclock {elapsed_h:.2f} h) ==========")
 
         t0 = time.perf_counter()
         sp_path = selfplay_step(workdir, iter_dir, best_scripted,
