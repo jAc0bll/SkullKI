@@ -2,6 +2,7 @@
 
 #include <torch/script.h>
 #include <torch/cuda.h>
+#include <ATen/Parallel.h>
 
 #include <cstring>
 #include <stdexcept>
@@ -23,9 +24,9 @@ TorchModelEvaluator::TorchModelEvaluator(const std::string& path,
     // threads for intra-op parallelism on every matmul. 24 workers × 14
     // threads on a 224-core box = ~336 contended threads, load average
     // explodes, nothing makes progress.
-    torch::set_num_threads(1);
-    // (set_num_interop_threads is not consistently exposed in `torch::` on
-    // all platforms; the Python-side OMP/MKL env vars cover the rest.)
+    at::set_num_threads(1);
+    // (set_num_interop_threads is not consistently exposed across platforms;
+    // the Python-side OMP/MKL env vars cover the rest.)
 
     torch::Device dev = torch::kCPU;
     if (device == "cuda" || device.rfind("cuda:", 0) == 0) {
