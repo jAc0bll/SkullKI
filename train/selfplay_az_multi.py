@@ -52,7 +52,10 @@ def main() -> None:
     ap.add_argument("--threads-per-gpu", type=int, default=32)
     ap.add_argument("--sims",    type=int, default=100)
     ap.add_argument("--max-batch",   type=int, default=64)
-    ap.add_argument("--max-wait-us", type=int, default=1000)
+    ap.add_argument("--max-wait-us", type=int, default=0,
+                    help="Scheduler batch-fill wait window. Default 0 = flush "
+                         "immediately. Empirically best for our small (1.9M param) "
+                         "model where GPU forward is fast and waiting wastes time.")
     ap.add_argument("--gpus",    type=int, default=1, help="Number of GPUs to use (cuda:0 .. cuda:N-1)")
     ap.add_argument("--seed",    type=int, default=1)
     ap.add_argument("--out",     required=True, help="Path to combined .npz output")

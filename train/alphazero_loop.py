@@ -234,7 +234,9 @@ def main():
     ap.add_argument("--az-threads-per-gpu", type=int, default=32,
                     help="MCTS threads per GPU for selfplay-impl=az")
     ap.add_argument("--az-max-batch",       type=int, default=64)
-    ap.add_argument("--az-max-wait-us",     type=int, default=1000)
+    ap.add_argument("--az-max-wait-us",     type=int, default=0,
+                    help="Scheduler wait window. 0 = flush on each request "
+                         "(best for small models where GPU forward is fast).")
     args = ap.parse_args()
 
     # Worker sanity check — too many workers thrash RAM and L3 cache without helping.
