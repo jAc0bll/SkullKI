@@ -19,16 +19,24 @@ from torch.utils.data import DataLoader, TensorDataset
 from model import PolicyValueNet, masked_log_softmax, ENC_DIM, ACTION_DIM, N_PLAYERS
 
 
-def load_dataset(path: Path):
-    z = np.load(path)
-    feats  = torch.from_numpy(z["features"]).float()
-    policy = torch.from_numpy(z["policy"]).float()
-    legal  = torch.from_numpy(z["legal"]).bool()
-    value  = torch.from_numpy(z["value"]).float()
-    assert feats.shape[1]  == ENC_DIM,    f"features shape {feats.shape}"
-    assert policy.shape[1] == ACTION_DIM, f"policy shape {policy.shape}"
-    assert legal.shape  == policy.shape
-    assert value.shape[1] == N_PLAYERS,   f"value shape {value.shape}  (re-run data_gen with new code)"
+def load_dataset(paths):
+    """Load one or more npz shards and concatenate. Each shard must share the
+    same column layout (features/policy/legal/value)."""
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    feats_l, policy_l, legal_l, value_l = [], [], [], []
+    for p in paths:
+        z = np.load(p)
+        assert z["features"].shape[1]  == ENC_DIM,    f"features shape {z['features'].shape} in {p}"
+        assert z["policy"].shape[1]    == ACTION_DIM, f"policy shape {z['policy'].shape} in {p}"
+        assert z["legal"].shape == z["policy"].shape
+        assert z["value"].shape[1] == N_PLAYERS, f"value shape {z['value'].shape} in {p} (re-run data_gen)"
+        feats_l.append(z["features"]); policy_l.append(z["policy"])
+        legal_l.append(z["legal"]);    value_l.append(z["value"])
+    feats  = torch.from_numpy(np.concatenate(feats_l,  axis=0)).float()
+    policy = torch.from_numpy(np.concatenate(policy_l, axis=0)).float()
+    legal  = torch.from_numpy(np.concatenate(legal_l,  axis=0)).bool()
+    value  = torch.from_numpy(np.concatenate(value_l,  axis=0)).float()
     return feats, policy, legal, value
 
 
@@ -90,7 +98,9 @@ def eval_split(model, loader, device, value_weight: float):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data",        type=str,   default="train/data/selfplay.npz")
+    ap.add_argument("--data",        type=str,   nargs="+", default=["train/data/selfplay.npz"],
+                    help="One or more npz shards (concatenated). Used by the AlphaZero "
+                         "loop to pass a replay window of the last N iterations.")
     ap.add_argument("--out",         type=str,   default="train/checkpoints/bc.pt")
     ap.add_argument("--init",        type=str,   default="",
                     help="Optional PyTorch checkpoint to warm-start from. "
@@ -108,16 +118,21 @@ def main():
     args = ap.parse_args()
 
     repo_root = Path(__file__).resolve().parent.parent
-    data_path = repo_root / args.data
-    out_path  = repo_root / args.out
+    data_paths = [repo_root / d for d in args.data]
+    out_path   = repo_root / args.out
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
     print(f"Device: {args.device}")
-    print(f"Loading {data_path}")
-    feats, policy, legal, value = load_dataset(data_path)
+    if len(data_paths) == 1:
+        print(f"Loading {data_paths[0]}")
+    else:
+        print(f"Loading {len(data_paths)} shards (replay buffer):")
+        for p in data_paths:
+            print(f"  {p}")
+    feats, policy, legal, value = load_dataset(data_paths)
     N = feats.shape[0]
     print(f"Samples: {N:,}")
 
