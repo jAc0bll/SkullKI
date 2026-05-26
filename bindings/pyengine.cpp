@@ -148,6 +148,23 @@ PYBIND11_MODULE(skullking, m) {
     // ---- GameState (mostly read-only views) ----
     py::class_<sk::GameState>(m, "GameState")
         .def(py::init<>())
+        // Cheap deep-copy: GameState is trivially-copyable in C++.
+        .def("copy",      [](const sk::GameState& s) { return s; })
+        .def("__copy__",  [](const sk::GameState& s) { return s; })
+        .def("__deepcopy__", [](const sk::GameState& s, py::dict) { return s; })
+        // Hand setter for installing a determinisation from Python.
+        .def("set_hand",
+             [](sk::GameState& s, int player, const std::vector<int>& cards) {
+                 if (player < 0 || player >= sk::N_PLAYERS)
+                     throw py::value_error("player out of range [0, N_PLAYERS)");
+                 s.hands[player].clear();
+                 for (int c : cards) {
+                     if (c < 0 || c >= sk::N_CARDS)
+                         throw py::value_error("card id out of range [0, N_CARDS)");
+                     s.hands[player].add(static_cast<sk::Card>(c));
+                 }
+             },
+             py::arg("player"), py::arg("cards"))
         .def_readwrite("round_number",     &sk::GameState::roundNumber)
         .def_readwrite("phase",            &sk::GameState::phase)
         .def_readwrite("current_player",   &sk::GameState::currentPlayer)
