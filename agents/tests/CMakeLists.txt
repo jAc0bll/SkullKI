@@ -1,0 +1,3 @@
+add_executable(sk_agent_tests test_agents.cpp)
+target_link_libraries(sk_agent_tests PRIVATE sk_engine sk_agents Catch2::Catch2WithMain)
+catch_discover_tests(sk_agent_tests)

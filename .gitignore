@@ -1,0 +1,52 @@
+# --- Build artifacts ---
+build/
+build-debug/
+
+# Compiled
+*.obj
+*.o
+*.a
+*.lib
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# Native modules
+*.so
+*.dylib
+*.dll
+*.pyd
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# --- Self-play data and run outputs (regeneratable; can be huge) ---
+train/data/
+runs/
+
+# Keep only the bootstrap checkpoints; exclude all the experiment artefacts.
+train/checkpoints/*
+!train/checkpoints/bc_v3_mc.pt
+!train/checkpoints/bc_v3_mc.scripted.pt
+!train/checkpoints/belief_v1.pt
+!train/checkpoints/belief_v1.scripted.pt
+
+# --- Editor / IDE / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+
+# --- Local debug leftovers ---
+debug.err
+debug.out
+
+# --- Claude Code session/local settings ---
+.claude/
