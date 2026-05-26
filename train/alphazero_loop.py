@@ -79,16 +79,37 @@ class IterStats:
 
 
 def selfplay_step(workdir: Path, iter_dir: Path, best_scripted: Path,
-                  games: int, sims: int, workers: int, device: str) -> Path:
+                  games: int, sims: int, workers: int, device: str,
+                  *, impl: str = "python",
+                  gpus: int = 1, threads_per_gpu: int = 32,
+                  max_batch: int = 64, max_wait_us: int = 1000) -> Path:
+    """Run one selfplay phase. `impl` picks between:
+       - 'python' : multi-process Python workers (no GPU batching)
+       - 'az'     : multi-threaded C++ selfplay_az with batched GPU inference
+    """
     out = iter_dir / "selfplay.npz"
-    cmd = [sys.executable, str(REPO_ROOT / "train" / "selfplay.py"),
-           "--model",   str(best_scripted),
-           "--games",   str(games),
-           "--sims",    str(sims),
-           "--workers", str(workers),
-           "--device",  device,
-           "--seed",    str(int(time.time()) & 0xFFFFFF),
-           "--out",     str(out.relative_to(REPO_ROOT))]
+    seed = int(time.time()) & 0xFFFFFF
+
+    if impl == "az":
+        cmd = [sys.executable, str(REPO_ROOT / "train" / "selfplay_az_multi.py"),
+               "--model",           str(best_scripted),
+               "--games",           str(games),
+               "--sims",            str(sims),
+               "--gpus",            str(gpus),
+               "--threads-per-gpu", str(threads_per_gpu),
+               "--max-batch",       str(max_batch),
+               "--max-wait-us",     str(max_wait_us),
+               "--seed",            str(seed),
+               "--out",             str(out.relative_to(REPO_ROOT))]
+    else:  # 'python'
+        cmd = [sys.executable, str(REPO_ROOT / "train" / "selfplay.py"),
+               "--model",   str(best_scripted),
+               "--games",   str(games),
+               "--sims",    str(sims),
+               "--workers", str(workers),
+               "--device",  device,
+               "--seed",    str(seed),
+               "--out",     str(out.relative_to(REPO_ROOT))]
     run(cmd, cwd=REPO_ROOT)
     return out
 
@@ -204,6 +225,16 @@ def main():
                     help="Device for selfplay. Default cpu — each worker creates its own CUDA "
                          "context (~500 MB VRAM each), so cuda + many workers OOMs the GPU. "
                          "At our model size single-sample inference is not faster on GPU anyway.")
+    # Phase 5C — multi-threaded batched-GPU selfplay path.
+    ap.add_argument("--selfplay-impl",  default="python", choices=["python", "az"],
+                    help="'python' = old multi-process selfplay.py path (CPU workers). "
+                         "'az' = new C++ selfplay_az with batched GPU inference (Phase 5C).")
+    ap.add_argument("--az-gpus",            type=int, default=1,
+                    help="Number of GPUs to use for selfplay-impl=az")
+    ap.add_argument("--az-threads-per-gpu", type=int, default=32,
+                    help="MCTS threads per GPU for selfplay-impl=az")
+    ap.add_argument("--az-max-batch",       type=int, default=64)
+    ap.add_argument("--az-max-wait-us",     type=int, default=1000)
     args = ap.parse_args()
 
     # Worker sanity check — too many workers thrash RAM and L3 cache without helping.
@@ -239,7 +270,12 @@ def main():
         t0 = time.perf_counter()
         sp_path = selfplay_step(workdir, iter_dir, best_scripted,
                                 args.selfplay_games, args.selfplay_sims,
-                                args.workers, args.selfplay_device)
+                                args.workers, args.selfplay_device,
+                                impl=args.selfplay_impl,
+                                gpus=args.az_gpus,
+                                threads_per_gpu=args.az_threads_per_gpu,
+                                max_batch=args.az_max_batch,
+                                max_wait_us=args.az_max_wait_us)
         t_sp = time.perf_counter() - t0
 
         t0 = time.perf_counter()
