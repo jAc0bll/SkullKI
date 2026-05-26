@@ -16,7 +16,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
-from model import PolicyValueNet, masked_log_softmax, ENC_DIM, ACTION_DIM, N_PLAYERS
+from model import build_model, masked_log_softmax, ENC_DIM, ACTION_DIM, N_PLAYERS
 
 
 def load_dataset(paths):
@@ -112,7 +112,13 @@ def main():
     ap.add_argument("--weight-decay", type=float, default=1e-4)
     ap.add_argument("--value-weight", type=float, default=1.0)
     ap.add_argument("--val-frac",    type=float, default=0.1)
+    ap.add_argument("--arch",        type=str,   default="v1", choices=["v1", "v2"],
+                    help="v1 = original 2-layer MLP (~1.9M params at hidden=1024). "
+                         "v2 = residual MLP (~25M params at hidden=2048, num_blocks=3).")
     ap.add_argument("--hidden",      type=int,   default=512)
+    ap.add_argument("--num-blocks",  type=int,   default=3,
+                    help="Only used for --arch v2: number of residual blocks.")
+    ap.add_argument("--dropout",     type=float, default=0.0)
     ap.add_argument("--device",      type=str,   default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--seed",        type=int,   default=0)
     args = ap.parse_args()
@@ -148,12 +154,16 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  pin_memory=pin)
     val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, pin_memory=pin)
 
-    model = PolicyValueNet(hidden=args.hidden).to(args.device)
+    model = build_model(args.arch, hidden=args.hidden,
+                        num_blocks=args.num_blocks, dropout=args.dropout).to(args.device)
     if args.init:
         init_path = repo_root / args.init
         ck = torch.load(init_path, map_location=args.device, weights_only=False)
         sd = ck["model"] if isinstance(ck, dict) and "model" in ck else ck
-        ck_hidden = ck.get("hidden") if isinstance(ck, dict) else None
+        ck_arch   = ck.get("arch",   "v1") if isinstance(ck, dict) else "v1"
+        ck_hidden = ck.get("hidden")        if isinstance(ck, dict) else None
+        if ck_arch != args.arch:
+            raise ValueError(f"--init arch={ck_arch} mismatches --arch {args.arch}.")
         if ck_hidden is not None and ck_hidden != args.hidden:
             raise ValueError(
                 f"--init hidden={ck_hidden} mismatches --hidden {args.hidden}. "
@@ -164,7 +174,10 @@ def main():
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
 
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"Model: {n_params/1e6:.2f}M params (hidden={args.hidden})")
+    arch_desc = f"arch={args.arch} hidden={args.hidden}"
+    if args.arch == "v2":
+        arch_desc += f" num_blocks={args.num_blocks} dropout={args.dropout}"
+    print(f"Model: {n_params/1e6:.2f}M params ({arch_desc})")
     print(f"Train: {len(train_idx):,}  Val: {len(val_idx):,}\n")
 
     # Establish baseline (so a warm-started model that gets worse during training
@@ -173,7 +186,10 @@ def main():
     print(f"epoch   0/{args.epochs}  init                            "
           f"val pol={init_val_pol:.4f} val={init_val_v:.4f}  top1={init_top1*100:5.2f}%")
     torch.save({"model": model.state_dict(),
+                "arch": args.arch,
                 "hidden": args.hidden,
+                "num_blocks": args.num_blocks,
+                "dropout": args.dropout,
                 "enc_dim": ENC_DIM,
                 "action_dim": ACTION_DIM}, out_path)
     best_val_pol = init_val_pol

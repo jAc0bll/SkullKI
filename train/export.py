@@ -15,7 +15,7 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "train"))
 
-from model import PolicyValueNet, ENC_DIM, ACTION_DIM, N_PLAYERS  # noqa: E402
+from model import build_model, ENC_DIM, ACTION_DIM, N_PLAYERS  # noqa: E402
 
 
 def main():
@@ -25,8 +25,11 @@ def main():
     args = ap.parse_args()
 
     ckpt = torch.load(args.ckpt, map_location="cpu", weights_only=True)
-    hidden = ckpt.get("hidden", 512)
-    model = PolicyValueNet(hidden=hidden)
+    arch       = ckpt.get("arch",       "v1")
+    hidden     = ckpt.get("hidden",     512)
+    num_blocks = ckpt.get("num_blocks", 3)
+    dropout    = ckpt.get("dropout",    0.0)
+    model = build_model(arch, hidden=hidden, num_blocks=num_blocks, dropout=dropout)
     model.load_state_dict(ckpt["model"])
     model.eval()
 
@@ -47,7 +50,8 @@ def main():
 
     sz_mb = out.stat().st_size / 1e6
     print(f"Exported TorchScript module")
-    print(f"  src   : {args.ckpt} (hidden={hidden})")
+    print(f"  src   : {args.ckpt} (arch={arch} hidden={hidden}"
+          + (f" num_blocks={num_blocks}" if arch == "v2" else "") + ")")
     print(f"  dst   : {out}  ({sz_mb:.2f} MB)")
     print(f"  shape : input (B, {ENC_DIM})  ->  policy (B, {ACTION_DIM}), value (B, {N_PLAYERS})")
 
