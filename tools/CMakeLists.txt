@@ -6,4 +6,8 @@ if(SK_BUILD_TORCH AND TARGET sk_torch)
     add_executable(benchmark_nn benchmark_nn.cpp)
     target_link_libraries(benchmark_nn PRIVATE sk_engine sk_agents sk_torch)
     target_compile_features(benchmark_nn PRIVATE cxx_std_20)
+
+    add_executable(benchmark_async benchmark_async.cpp)
+    target_link_libraries(benchmark_async PRIVATE sk_engine sk_torch)
+    target_compile_features(benchmark_async PRIVATE cxx_std_20)
 endif()

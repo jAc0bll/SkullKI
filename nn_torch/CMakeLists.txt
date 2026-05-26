@@ -3,6 +3,7 @@ add_library(sk_torch STATIC
     src/torch_nn_agent.cpp
     src/neural_mcts.cpp
     src/belief_model.cpp
+    src/async_batch_evaluator.cpp
 )
 
 target_include_directories(sk_torch PUBLIC include)
