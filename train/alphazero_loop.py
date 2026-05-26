@@ -223,7 +223,7 @@ def main():
         t0 = time.perf_counter()
         sp_path = selfplay_step(workdir, iter_dir, best_scripted,
                                 args.selfplay_games, args.selfplay_sims,
-                                args.workers, args.device if args.device == "cpu" else "cpu")
+                                args.workers, args.device)
         t_sp = time.perf_counter() - t0
 
         t0 = time.perf_counter()
@@ -235,7 +235,7 @@ def main():
 
         t0 = time.perf_counter()
         winrate, cand_avg, best_avg = eval_gate(cand_scripted, best_scripted,
-                                                args.gate_games, args.gate_sims, "cpu")
+                                                args.gate_games, args.gate_sims, args.device)
         t_ev = time.perf_counter() - t0
 
         promoted = winrate >= args.gate_winrate
