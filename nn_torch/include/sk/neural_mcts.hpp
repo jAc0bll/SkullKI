@@ -2,7 +2,8 @@
 
 #include "sk/agent.hpp"
 #include "sk/ismcts.hpp"           // reuse ISMCTSConfig and ISMCTSResult
-#include "sk/torch_model.hpp"
+#include "sk/evaluator.hpp"        // abstract BaseEvaluator
+#include "sk/torch_model.hpp"      // for convenience (concrete impl)
 #include "sk/belief_model.hpp"     // optional belief-conditioned determinizer
 
 namespace sk {
@@ -34,7 +35,7 @@ struct NeuralMCTSConfig {
 
 class NeuralMCTSAgent final : public Agent {
 public:
-    NeuralMCTSAgent(TorchModelEvaluator* evaluator, NeuralMCTSConfig cfg = {})
+    NeuralMCTSAgent(BaseEvaluator* evaluator, NeuralMCTSConfig cfg = {})
         : model_(evaluator), cfg_(cfg) {}
 
     Action selectAction(const GameState& s, std::mt19937_64& rng) override;
@@ -46,7 +47,7 @@ public:
     const NeuralMCTSConfig& config() const { return cfg_; }
 
 private:
-    TorchModelEvaluator* model_;
+    BaseEvaluator*       model_;
     NeuralMCTSConfig     cfg_;
 };
 

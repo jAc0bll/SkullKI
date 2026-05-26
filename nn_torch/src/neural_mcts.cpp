@@ -58,7 +58,7 @@ void normalizePriorOverLegal(std::array<float, ACTION_DIM>& prior,
 
 void evaluateNodeWithNN(PUCTNode& node,
                         const GameState& state,
-                        TorchModelEvaluator& model)
+                        BaseEvaluator& model)
 {
     const Observation obs = observe(state, state.currentPlayer);
     const PolicyValue pv  = model.evaluate(obs);
