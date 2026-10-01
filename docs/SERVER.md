@@ -70,6 +70,18 @@ oder Neustart des Servers einfach `start.sh` erneut ausführen.
 
 Nur bestimmte Runden: `bash scripts/start.sh --rounds 4-10`.
 
+## Speicherplatz
+
+Fertige Schritte räumen ihre großen Zwischenstände automatisch weg. Manuell
+(jederzeit, auch während das Training läuft):
+
+```bash
+bash scripts/cleanup.sh
+```
+
+Bedarf während des Laufs: höchstens ~20 GB für den gerade laufenden Schritt,
+plus ~10 GB für PyTorch und Build.
+
 ## 6. Ergebnisse sichern
 
 Alles liegt unter `~/SkullKI/runs/all/`:

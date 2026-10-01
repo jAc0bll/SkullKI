@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -77,6 +78,17 @@ def run_step(cmd: list[str], logfile: Path) -> None:
             log.flush()
         if proc.wait() != 0:
             raise RuntimeError(f"step failed (exit {proc.returncode}): {' '.join(cmd)}")
+
+
+def cleanup(step_dir: Path) -> None:
+    """Delete what a finished step no longer needs: resume checkpoints (the
+    replay buffers, ~6-12 GB per step in big rounds) and the per-iteration
+    sample files. Keeps the networks (*.bin) and logs."""
+    if not (step_dir / "DONE").exists():
+        return
+    shutil.rmtree(step_dir / "ckpt", ignore_errors=True)
+    for f in list(step_dir.glob("s_*.npy")) + list(step_dir.glob("v_*.npy")):
+        f.unlink(missing_ok=True)
 
 
 def parse_rounds(spec: str) -> list[int]:
@@ -153,6 +165,7 @@ def main() -> None:
                       "--avg-weight-power", "2", "--eval-every", str(eval_every),
                       "--label", f"round {r} training"] + to_flags(train_cfg), logfile)
 
+        cleanup(td)
         result = summary.get(str(r), {"round": r})
         for seat in seats:
             ed = rd / f"exploit_seat{seat + 1}"
@@ -164,6 +177,7 @@ def main() -> None:
                           "--eval-every", str(exploit_cfg["iters"]),
                           "--label", f"round {r} exploiter seat {seat + 1}"]
                          + to_flags(exploit_cfg), logfile)
+            cleanup(ed)
             result[f"exploit_seat{seat + 1}"] = exploit_gain(ed)
         if r == 1:
             evals = [json.loads(l) for l in (td / "log.jsonl").read_text().splitlines() if "eval_avg" in l]
