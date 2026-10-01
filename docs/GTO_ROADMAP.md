@@ -88,10 +88,8 @@ Full-width tabular CFR is out of reach, as is an exact best response for
 
 - Make the player count a runtime/template parameter (`N_PLAYERS = 4` is a
   compile-time constant today).
-- Open question: the official 2-player rules add **Graybeard**, a ghost hand
-  whose top card is played second in every trick without following rules.
-  It is still a 2-player zero-sum game (Graybeard is a chance player). Pure
-  heads-up without Graybeard is the alternative.
+- **Decided: pure heads-up, no Graybeard.** (The official 2-player rules add
+  Graybeard, a ghost hand played second in every trick; we do not model it.)
 - 2p rounds 1–2 are small enough for exact solving with the existing
-  full-width solver (round 2 heads-up: ~5·10⁶ deals; more with Graybeard's
-  hand), round 3 with sampling.
+  full-width solver (round 2 heads-up: ~5·10⁶ deals
+  ), round 3 with sampling.
