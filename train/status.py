@@ -11,6 +11,8 @@ import os
 import time
 from pathlib import Path
 
+from run_all import exploit_gain   # same directory (train/)
+
 
 def fmt_dur(s: float | None) -> str:
     if s is None:
@@ -62,7 +64,6 @@ def snapshot(wd: Path) -> str:
     lines.append("")
     lines.append(f"{'round':>5}  {'training':<40} {'exploit seat1':>14} {'exploit seat4':>14}")
 
-    total_eta = 0.0
     for r in rounds:
         rd = wd / f"round{r:02d}"
         tr = rd / "train"
@@ -72,18 +73,19 @@ def snapshot(wd: Path) -> str:
             p = load(tr / "progress.json")
             if p:
                 tcol = f"{bar(p['iter'] / p['iters'], 16)} {p['iter']}/{p['iters']} ETA {fmt_dur(p['eta_seconds'])}"
-                total_eta += p["eta_seconds"]
             else:
                 tcol = "waiting"
         cols = []
         for seat in (1, 4):
             ed = rd / f"exploit_seat{seat}"
             res = (summary.get(str(r)) or {}).get(f"exploit_seat{seat}")
+            if not res and (ed / "DONE").exists():
+                res = exploit_gain(ed)   # finished, round summary not written yet
             if res:
                 cols.append(f"{res['gain']:+.3f}±{res['stderr']:.3f}")
             elif (ed / "progress.json").exists():
                 p = load(ed / "progress.json") or {}
-                cols.append(f"{p.get('iter', 0)}/{p.get('iters', '?')} ...")
+                cols.append(f"{p.get('iter', 0)}/{p.get('iters', '?')} {fmt_dur(p.get('eta_seconds'))}")
             else:
                 cols.append("-")
         lines.append(f"{r:>5}  {tcol:<40} {cols[0]:>14} {cols[1]:>14}")
@@ -93,7 +95,9 @@ def snapshot(wd: Path) -> str:
         lines.append(f"round 1 exact NashConv: {summary['1']['exact_nashconv']:.4f} points/round")
     lines.append("exploit = points per round a trained exploiter wins over the strategy "
                  "(lower = closer to GTO)")
-    lines.append(f"updated {time.strftime('%H:%M:%S')}  (current step ETA {fmt_dur(total_eta)})")
+    cur = load(Path(status["dir"]) / "progress.json") if status.get("dir") else None
+    eta = fmt_dur(cur["eta_seconds"]) if cur and state.startswith("RUNNING") else "-"
+    lines.append(f"updated {time.strftime('%H:%M:%S')}  (current step ETA {eta})")
     return "\n".join(lines)
 
 
