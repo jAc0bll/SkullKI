@@ -21,12 +21,28 @@ reasoning, and an AlphaZero-style iteration loop ready to run on GPU.
 | AlphaZero iteration orchestrator          | Smoke-tested end-to-end                             |
 | vast.ai / Docker deployment               | Dockerfile + bootstrap script                       |
 
+## Equilibrium (GTO) solver
+
+The goal of this branch is a game-theoretically optimal strategy, not just a
+strong bot. See [`docs/GTO_ROADMAP.md`](docs/GTO_ROADMAP.md) for the plan,
+the rules decisions and the current status.
+
+```
+build.cmd                                   # Windows: clang-cl build without Torch/Python
+./build/tools/sk_solve_round --round 1 --iters 300 --eval-every 50 --out round1.csv
+```
+
+`sk_solve_round` runs full-width Discounted CFR over every deal of a round
+and reports the exact NashConv (how much a single player could gain by
+deviating). Round 1 with 4 players is solved exactly.
+
 ## Repository layout
 
 ```
 engine/      C++ game engine — rules, state, scoring, observation, encoder.
 agents/      Random + Heuristic agents.
-search/      ISMCTS (vanilla, uniform determinizer).
+search/      ISMCTS (determinizer respects voids and simultaneous bids).
+solver/      Equilibrium solver: round games, exact deal enumeration, DCFR, best response.
 nn_torch/    LibTorch-backed inference + PUCT-MCTS + belief sampler.
 bindings/    pybind11 module `skullking`.
 tools/       CLI utilities (tournament, NN benchmark).
