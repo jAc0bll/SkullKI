@@ -111,6 +111,24 @@ int main(int argc, char** argv) {
             writeNpy(a.out + "_ptarget.npy", p.target, {p.size(), A});
             std::printf("regret samples %zu, policy samples %zu (%.1fs)\n", r.size(), p.size(),
                         secondsSince(t0));
+        } else if (a.cmd == "chart") {
+            // Round-1 bidding of the policy: P(bid 1) per seat and card kind,
+            // one line per kind: "kind p1 p2 p3 p4".
+            for (int k = 0; k < N_KINDS; ++k) {
+                std::printf("%s", kindName(static_cast<Kind>(k)).c_str());
+                for (int seat = 0; seat < N_PLAYERS; ++seat) {
+                    std::array<CardSet, N_PLAYERS> hands{};
+                    hands[seat].add(firstCardOfKind(static_cast<Kind>(k)));
+                    RoundState rs = makeRoundState(1, hands);
+                    rs.s.currentPlayer = static_cast<std::int8_t>(seat);
+                    ActionList al;
+                    legalKindActions(rs.s, al);
+                    double pr[2];
+                    policy->probs(rs, seat, al, pr);
+                    std::printf(" %.3f", pr[1]);
+                }
+                std::printf("\n");
+            }
         } else if (a.cmd == "eval") {
             if (a.round != 1) {
                 std::fprintf(stderr, "exact evaluation only for round 1\n");

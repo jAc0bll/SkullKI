@@ -103,10 +103,11 @@ class Reservoir:
 # Training
 # --------------------------------------------------------------------------
 def train_masked(net, buf: Reservoir, steps: int, batch: int, lr: float, kind: str,
-                 scale: float, gen: torch.Generator) -> float:
+                 scale: float, gen: torch.Generator, weight_power: float = 1.0) -> float:
     """kind='regret': weighted MSE on legal actions (targets / scale).
     kind='policy': weighted cross-entropy of masked softmax vs. target sigma.
-    Sample weight = iteration index (Linear CFR)."""
+    Sample weight = iteration ** weight_power (1 = Linear CFR; 2 = DCFR's
+    gamma=2 for the average strategy, forgetting early iterations faster)."""
     opt = torch.optim.Adam(net.parameters(), lr=lr)
     n = buf.size
     last = 0.0
@@ -115,7 +116,7 @@ def train_masked(net, buf: Reservoir, steps: int, batch: int, lr: float, kind: s
         x = torch.from_numpy(buf.x[idx]).float()
         m = torch.from_numpy(buf.mask[idx]).bool()
         y = torch.from_numpy(buf.target[idx])
-        w = torch.from_numpy(buf.iter[idx])
+        w = torch.from_numpy(buf.iter[idx]) ** weight_power
         w = w / w.mean()
         out = net(x)
         if kind == "regret":
@@ -129,7 +130,7 @@ def train_masked(net, buf: Reservoir, steps: int, batch: int, lr: float, kind: s
         loss.backward()
         opt.step()
         if step == steps - 1:
-            last = float(loss)
+            last = loss.item()
     return last
 
 
@@ -147,7 +148,7 @@ def train_value(net, x: np.ndarray, y: np.ndarray, steps: int, batch: int, lr: f
         loss.backward()
         opt.step()
         if step == steps - 1:
-            last = float(loss)
+            last = loss.item()
     return last
 
 
@@ -175,6 +176,8 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--scale", type=float, default=50.0, help="points per network unit")
     ap.add_argument("--eval-every", type=int, default=5)
+    ap.add_argument("--regret-weight-power", type=float, default=1.0)
+    ap.add_argument("--avg-weight-power", type=float, default=1.0)
     ap.add_argument("--exact-values", action="store_true",
                     help="diagnostic: exact action values instead of a value net (tiny rounds)")
     ap.add_argument("--seed", type=int, default=1)
@@ -223,7 +226,8 @@ def main() -> None:
         # 3. regret net from scratch -> sigma_{t+1}
         rnet = mlp(INFO_DIM, args.hidden, args.layers, ACT_DIM)
         rec["regret_loss"] = train_masked(rnet, regret_buf, args.regret_steps, args.batch,
-                                          args.lr, "regret", args.scale, gen)
+                                          args.lr, "regret", args.scale, gen,
+                                          args.regret_weight_power)
         policy_path = wd / "regret.bin"
         export(rnet, policy_path, args.scale)
 
@@ -231,7 +235,8 @@ def main() -> None:
         if t % args.eval_every == 0 or t == args.iters:
             pnet = mlp(INFO_DIM, args.hidden, args.layers, ACT_DIM)
             rec["policy_loss"] = train_masked(pnet, policy_buf, args.policy_steps, args.batch,
-                                              args.lr, "policy", 1.0, gen)
+                                              args.lr, "policy", 1.0, gen,
+                                              args.avg_weight_power)
             export(pnet, wd / "avg.bin")
             if args.round == 1:
                 rec["eval_avg"] = run(["eval", "--round", "1", "--policy", str(wd / "avg.bin"),
