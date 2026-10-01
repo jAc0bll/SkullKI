@@ -8,6 +8,9 @@ add_library(sk_solver STATIC
     src/cfr.cpp
     src/mccfr.cpp
     src/best_response.cpp
+    src/encoding.cpp
+    src/mlp.cpp
+    src/deep.cpp
 )
 
 target_include_directories(sk_solver PUBLIC include)

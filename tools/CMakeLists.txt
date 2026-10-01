@@ -6,6 +6,10 @@ add_executable(sk_solve_round solve_round.cpp)
 target_link_libraries(sk_solve_round PRIVATE sk_solver)
 target_compile_features(sk_solve_round PRIVATE cxx_std_20)
 
+add_executable(sk_deep deep_tool.cpp)
+target_link_libraries(sk_deep PRIVATE sk_solver)
+target_compile_features(sk_deep PRIVATE cxx_std_20)
+
 add_executable(sk_bench_traversal bench_traversal.cpp)
 target_link_libraries(sk_bench_traversal PRIVATE sk_solver)
 target_compile_features(sk_bench_traversal PRIVATE cxx_std_20)

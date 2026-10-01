@@ -390,3 +390,119 @@ TEST_CASE("Feature abstraction keeps big-round tables small", "[solver][abstract
     for (int i = 0; i < 2; ++i) { exact.runBatch(); feat.runBatch(); }
     REQUIRE(feat.table().size() * 3 < exact.table().size());
 }
+
+// ---------------------------------------------------------------------------
+// Neural solver plumbing
+// ---------------------------------------------------------------------------
+#include "sk/solver/deep.hpp"
+#include "sk/solver/encoding.hpp"
+#include "sk/solver/mlp.hpp"
+
+#include <cstdio>
+#include <fstream>
+
+TEST_CASE("Encoding: action indices are distinct and in range", "[deep][encoding]") {
+    std::array<bool, ACT_DIM> seen{};
+    auto check = [&](Action a) {
+        const int i = actionIndex(a);
+        REQUIRE(i >= 0);
+        REQUIRE(i < ACT_DIM);
+        REQUIRE(!seen[i]);
+        seen[i] = true;
+    };
+    for (int b = 0; b <= 10; ++b) check(Action::makeBid(b));
+    for (int k = 0; k < N_KINDS; ++k) check(Action::makePlay(firstCardOfKind(static_cast<Kind>(k))));
+    check(Action::makeTigressMode(true));
+    check(Action::makeTigressMode(false));
+}
+
+TEST_CASE("Encoding: infoset features hide other hands and hidden bids", "[deep][encoding]") {
+    std::mt19937_64 rng(13);
+    std::uint8_t a[INFO_DIM], b[INFO_DIM];
+    for (int trial = 0; trial < 2000; ++trial) {
+        const int round = 1 + trial % 10;
+        RoundState rs = makeRoundState(round, randomHands(round, rng));
+        std::uniform_int_distribution<int> steps(0, N_PLAYERS * (round + 1));
+        const int n = steps(rng);
+        for (int i = 0; i < n && !rs.terminal(); ++i) {
+            ActionList al;
+            legalKindActions(rs.s, al);
+            applyRound(rs, al[std::uniform_int_distribution<int>(0, al.n - 1)(rng)]);
+        }
+        if (rs.terminal()) continue;
+        const int p = rs.s.currentPlayer;
+        encodeInfoset(rs, p, a);
+        RoundState other = rs;
+        const int q1 = (p + 1) % N_PLAYERS, q2 = (p + 3) % N_PLAYERS;
+        if (other.s.hands[q1].count() == other.s.hands[q2].count())
+            std::swap(other.s.hands[q1], other.s.hands[q2]);
+        if (other.s.phase == Phase::Bidding)
+            for (int q = 0; q < N_PLAYERS; ++q)
+                if (q != p && other.s.bids[q] >= 0) other.s.bids[q] = static_cast<std::int8_t>((other.s.bids[q] + 1) % (round + 1));
+        encodeInfoset(other, p, b);
+        REQUIRE(std::equal(a, a + INFO_DIM, b));
+    }
+}
+
+TEST_CASE("MLP: loads exported weights and computes a ReLU network", "[deep][mlp]") {
+    // 3 -> 2 (ReLU) -> 1, hand-made weights.
+    const std::string path = "test_mlp_tmp.bin";
+    {
+        std::ofstream f(path, std::ios::binary);
+        f.write("SKMLP001", 8);
+        const std::uint32_t n = 2;
+        f.write(reinterpret_cast<const char*>(&n), 4);
+        auto layer = [&](std::uint32_t in, std::uint32_t out, std::vector<float> w, std::vector<float> b) {
+            f.write(reinterpret_cast<const char*>(&in), 4);
+            f.write(reinterpret_cast<const char*>(&out), 4);
+            f.write(reinterpret_cast<const char*>(w.data()), w.size() * 4);
+            f.write(reinterpret_cast<const char*>(b.data()), b.size() * 4);
+        };
+        layer(3, 2, {1, 2, 3, -1, -1, -1}, {0.5f, 0.0f});
+        layer(2, 1, {2, 10}, {-1.0f});
+    }
+    const MLP m = MLP::load(path);
+    std::remove(path.c_str());
+    const std::uint8_t x[3] = {1, 0, 2};
+    float y = 0;
+    m.forward(x, &y);
+    // h = relu([1+6+0.5, -1-2]) = [7.5, 0]; y = 2*7.5 + 0 - 1 = 14
+    REQUIRE(y == Catch::Approx(14.0f));
+}
+
+TEST_CASE("npy writer produces a valid header", "[deep][npy]") {
+    const std::string path = "test_npy_tmp.npy";
+    writeNpy(path, std::vector<float>{1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f}, {2, 3});
+    std::ifstream f(path, std::ios::binary);
+    std::string all((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    f.close();
+    std::remove(path.c_str());
+    REQUIRE(all.substr(1, 5) == "NUMPY");
+    const std::size_t hlen = static_cast<unsigned char>(all[8]) | (static_cast<unsigned char>(all[9]) << 8);
+    REQUIRE((10 + hlen) % 64 == 0);
+    REQUIRE(all.find("'shape': (2, 3)") != std::string::npos);
+    REQUIRE(all.size() == 10 + hlen + 6 * 4);
+}
+
+TEST_CASE("Regret samples with exact values are consistent", "[deep][gen]") {
+    GenConfig g;
+    g.round = 1;
+    g.count = 200;
+    const UniformPolicy uniform;
+    RegretSamples r;
+    PolicySamples p;
+    generateRegretSamples(uniform, nullptr, g, r, p);
+    REQUIRE(r.size() > 0);
+    REQUIRE(p.size() > 0);
+    for (std::size_t i = 0; i < r.size(); ++i) {
+        // Regrets of the legal actions sum to 0 under the uniform strategy.
+        double sum = 0.0;
+        int legal = 0;
+        for (int a = 0; a < ACT_DIM; ++a) {
+            if (r.mask[i * ACT_DIM + a]) { sum += r.target[i * ACT_DIM + a]; ++legal; }
+            else REQUIRE(r.target[i * ACT_DIM + a] == 0.0f);
+        }
+        REQUIRE(legal >= 2);
+        REQUIRE(sum == Catch::Approx(0.0).margin(1e-3));
+    }
+}
