@@ -8,8 +8,14 @@ script trains them (PyTorch) and drives the loop:
       2. sk_deep gen-regrets  (sigma_t, V_t)   -> add to regret / policy buffers
       3. train regret net from scratch on the regret buffer (weight t)
          -> sigma_{t+1} = regret matching on its output
-      every --eval-every iterations: train the average-strategy net on the
-      policy buffer and measure exact NashConv (round 1 only).
+      every --eval-every iterations (and at the end): train the
+      average-strategy net on the policy buffer; round 1 also gets its exact
+      NashConv.
+
+Long runs are resumable: every --checkpoint-every iterations the buffers,
+the value net and the iteration counter are saved to the workdir; --resume
+continues from there. progress.json in the workdir always holds the current
+iteration and an ETA (read by scripts/status.sh).
 
 Usage (round 1 gate, from the repo root):
   .venv/Scripts/python train/deep_cfr.py --round 1 --iters 30 --workdir runs/deep_r1
@@ -24,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import struct
 import subprocess
 import sys
@@ -59,7 +66,8 @@ def export(net: nn.Sequential, path: Path, out_scale: float = 1.0) -> None:
     """Write SKMLP001 (see solver/include/sk/solver/mlp.hpp). The last layer is
     multiplied by out_scale so C++ sees outputs in real units."""
     linears = [m for m in net if isinstance(m, nn.Linear)]
-    with open(path, "wb") as f:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "wb") as f:
         f.write(b"SKMLP001")
         f.write(struct.pack("<I", len(linears)))
         for i, lin in enumerate(linears):
@@ -70,12 +78,15 @@ def export(net: nn.Sequential, path: Path, out_scale: float = 1.0) -> None:
             f.write(struct.pack("<II", w.shape[1], w.shape[0]))
             f.write(np.ascontiguousarray(w).tobytes())
             f.write(np.ascontiguousarray(b).tobytes())
+    os.replace(tmp, path)
 
 
 # --------------------------------------------------------------------------
 # Reservoir buffer (Deep CFR keeps a uniform sample of all iterations)
 # --------------------------------------------------------------------------
 class Reservoir:
+    FIELDS = ("x", "mask", "target", "iter")
+
     def __init__(self, capacity: int, x_dim: int, rng: np.random.Generator):
         self.cap = capacity
         self.x = np.zeros((capacity, x_dim), np.uint8)
@@ -104,12 +115,24 @@ class Reservoir:
             self.x[dst], self.mask[dst], self.target[dst], self.iter[dst] = x[src], mask[src], target[src], it
         self.seen += n
 
+    def save(self, prefix: Path) -> None:
+        for f in self.FIELDS:
+            np.save(f"{prefix}_{f}.npy", getattr(self, f)[: self.size])
+        (Path(f"{prefix}_meta.json")).write_text(json.dumps({"size": self.size, "seen": self.seen}))
+
+    def load(self, prefix: Path) -> None:
+        meta = json.loads(Path(f"{prefix}_meta.json").read_text())
+        self.size, self.seen = meta["size"], meta["seen"]
+        for f in self.FIELDS:
+            getattr(self, f)[: self.size] = np.load(f"{prefix}_{f}.npy")
+
 
 # --------------------------------------------------------------------------
 # Training
 # --------------------------------------------------------------------------
 def train_masked(net, buf: Reservoir, steps: int, batch: int, lr: float, kind: str,
-                 scale: float, gen: torch.Generator, weight_power: float = 1.0) -> float:
+                 scale: float, gen: torch.Generator, dev: torch.device,
+                 weight_power: float = 1.0) -> float:
     """kind='regret': weighted MSE on legal actions (targets / scale).
     kind='policy': weighted cross-entropy of masked softmax vs. target sigma.
     Sample weight = iteration ** weight_power (1 = Linear CFR; 2 = DCFR's
@@ -119,10 +142,10 @@ def train_masked(net, buf: Reservoir, steps: int, batch: int, lr: float, kind: s
     last = 0.0
     for step in range(steps):
         idx = torch.randint(0, n, (min(batch, n),), generator=gen).numpy()
-        x = torch.from_numpy(buf.x[idx]).float()
-        m = torch.from_numpy(buf.mask[idx]).bool()
-        y = torch.from_numpy(buf.target[idx])
-        w = torch.from_numpy(buf.iter[idx]) ** weight_power
+        x = torch.from_numpy(buf.x[idx]).to(dev).float()
+        m = torch.from_numpy(buf.mask[idx]).to(dev).bool()
+        y = torch.from_numpy(buf.target[idx]).to(dev)
+        w = torch.from_numpy(buf.iter[idx]).to(dev) ** weight_power
         w = w / w.mean()
         out = net(x)
         if kind == "regret":
@@ -141,14 +164,14 @@ def train_masked(net, buf: Reservoir, steps: int, batch: int, lr: float, kind: s
 
 
 def train_value(net, x: np.ndarray, y: np.ndarray, steps: int, batch: int, lr: float,
-                scale: float, gen: torch.Generator) -> float:
+                scale: float, gen: torch.Generator, dev: torch.device) -> float:
     opt = torch.optim.Adam(net.parameters(), lr=lr)
     n = len(y)
     last = 0.0
     for step in range(steps):
         idx = torch.randint(0, n, (min(batch, n),), generator=gen).numpy()
-        xb = torch.from_numpy(x[idx]).float()
-        yb = torch.from_numpy(y[idx]) / scale
+        xb = torch.from_numpy(x[idx]).to(dev).float()
+        yb = torch.from_numpy(y[idx]).to(dev) / scale
         loss = ((net(xb).squeeze(1) - yb) ** 2).mean()
         opt.zero_grad()
         loss.backward()
@@ -163,6 +186,39 @@ def run(cmd: list[str]) -> str:
     if res.returncode != 0:
         raise RuntimeError(f"sk_deep {' '.join(cmd)} failed:\n{res.stdout}\n{res.stderr}")
     return res.stdout.strip()
+
+
+def write_json(path: Path, obj: dict) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(obj, indent=1))
+    os.replace(tmp, path)
+
+
+# --------------------------------------------------------------------------
+# Checkpoints
+# --------------------------------------------------------------------------
+def save_checkpoint(wd: Path, t: int, regret_buf: Reservoir, policy_buf: Reservoir,
+                    value_net: nn.Module, elapsed: float) -> None:
+    ck = wd / "ckpt"
+    ck.mkdir(exist_ok=True)
+    regret_buf.save(ck / "regret")
+    policy_buf.save(ck / "policy")
+    torch.save(value_net.state_dict(), ck / "value.pt")
+    # Written last: a checkpoint only counts once this file says so.
+    write_json(ck / "state.json", {"iter": t, "elapsed": elapsed})
+
+
+def load_checkpoint(wd: Path, regret_buf: Reservoir, policy_buf: Reservoir,
+                    value_net: nn.Module) -> tuple[int, float]:
+    ck = wd / "ckpt"
+    state_file = ck / "state.json"
+    if not state_file.exists():
+        return 0, 0.0
+    state = json.loads(state_file.read_text())
+    regret_buf.load(ck / "regret")
+    policy_buf.load(ck / "policy")
+    value_net.load_state_dict(torch.load(ck / "value.pt", map_location="cpu"))
+    return int(state["iter"]), float(state.get("elapsed", 0.0))
 
 
 def main() -> None:
@@ -191,8 +247,14 @@ def main() -> None:
                     help="train a best response for --br-player against this average-strategy net")
     ap.add_argument("--br-player", type=int, default=0)
     ap.add_argument("--match-deals", type=int, default=2_000_000)
+    ap.add_argument("--device", default="auto", help="auto | cpu | cuda")
+    ap.add_argument("--checkpoint-every", type=int, default=5)
+    ap.add_argument("--resume", action="store_true", help="continue from workdir/ckpt if present")
+    ap.add_argument("--label", default="", help="shown in progress.json (e.g. 'round 5')")
     args = ap.parse_args()
 
+    dev = torch.device("cuda" if args.device == "auto" and torch.cuda.is_available()
+                       else ("cpu" if args.device == "auto" else args.device))
     torch.manual_seed(args.seed)
     gen = torch.Generator().manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
@@ -203,10 +265,18 @@ def main() -> None:
     regret_buf = Reservoir(args.buffer, INFO_DIM, rng)
     policy_buf = Reservoir(args.buffer, INFO_DIM, rng)
     value_net = mlp(HIST_DIM, args.hidden, args.layers, 1)
-    policy_path: Path | None = None
-    t_start = time.time()
+    start_iter, elapsed_before = (load_checkpoint(wd, regret_buf, policy_buf, value_net)
+                                  if args.resume else (0, 0.0))
+    value_net.to(dev)
+    policy_path: Path | None = (wd / "regret.bin") if start_iter > 0 else None
+    if start_iter:
+        print(f"resumed after iteration {start_iter} (buffers {regret_buf.size}/{policy_buf.size})",
+              flush=True)
+    print(f"device {dev}", flush=True)
+    t_start = time.time() - elapsed_before
+    iter_times: list[float] = []
 
-    for t in range(1, args.iters + 1):
+    for t in range(start_iter + 1, args.iters + 1):
         it0 = time.time()
         pol = ["--policy", str(policy_path)] if policy_path else []
         if args.br_vs:
@@ -217,46 +287,50 @@ def main() -> None:
 
         # 1. value net on on-policy returns of sigma_t
         if not args.exact_values:
-            out = run(["gen-values", "--count", str(args.value_games), "--out", str(wd / "v")] + common)
+            run(["gen-values", "--count", str(args.value_games), "--out", str(wd / "v")] + common)
             vx = np.load(wd / "v_x.npy")
             vy = np.load(wd / "v_y.npy")
             rec["value_samples"] = len(vy)
             rec["value_loss"] = train_value(value_net, vx, vy, args.value_steps, args.batch,
-                                            args.lr, args.scale, gen)
+                                            args.lr, args.scale, gen, dev)
             export(value_net, wd / "value.bin", args.scale)
             vals = ["--value", str(wd / "value.bin")]
         else:
             vals = ["--exact-values"]
 
         # 2. regret + policy samples
-        out = run(["gen-regrets", "--count", str(args.regret_traj), "--out", str(wd / "s")] + common + vals)
+        run(["gen-regrets", "--count", str(args.regret_traj), "--out", str(wd / "s")] + common + vals)
         rx, rm, rt = (np.load(wd / f"s_{k}.npy") for k in ("rx", "rmask", "rtarget"))
-        px, pm, pt = (np.load(wd / f"s_{k}.npy") for k in ("px", "pmask", "ptarget"))
         regret_buf.add(rx, rm, rt, t)
-        policy_buf.add(px, pm, pt, t)
-        rec["regret_samples"], rec["policy_samples"] = len(rx), len(px)
+        if not args.br_vs:
+            px, pm, pt = (np.load(wd / f"s_{k}.npy") for k in ("px", "pmask", "ptarget"))
+            policy_buf.add(px, pm, pt, t)
+            rec["policy_samples"] = len(px)
+        rec["regret_samples"] = len(rx)
 
         # 3. regret net from scratch -> sigma_{t+1}
-        rnet = mlp(INFO_DIM, args.hidden, args.layers, ACT_DIM)
+        rnet = mlp(INFO_DIM, args.hidden, args.layers, ACT_DIM).to(dev)
         rec["regret_loss"] = train_masked(rnet, regret_buf, args.regret_steps, args.batch,
-                                          args.lr, "regret", args.scale, gen,
+                                          args.lr, "regret", args.scale, gen, dev,
                                           args.regret_weight_power)
         policy_path = wd / "regret.bin"
         export(rnet, policy_path, args.scale)
 
+        is_eval = t % args.eval_every == 0 or t == args.iters
+
         # Best-response mode: how much does the trained seat gain?
-        if args.br_vs and (t % args.eval_every == 0 or t == args.iters):
+        if args.br_vs and is_eval:
             seat = ["--round", str(args.round), "--learner", str(args.br_player),
                     "--opp-policy", str(args.br_vs), "--count", str(args.match_deals),
                     "--seed", str(424242)]
             rec["br_match"] = run(["match", "--policy", str(policy_path), "--mode", "rm"] + seat)
             rec["base_match"] = run(["match", "--policy", str(args.br_vs), "--mode", "softmax"] + seat)
 
-        # Average strategy + exact evaluation
-        if not args.br_vs and (t % args.eval_every == 0 or t == args.iters):
-            pnet = mlp(INFO_DIM, args.hidden, args.layers, ACT_DIM)
+        # Average strategy (+ exact evaluation in round 1)
+        if not args.br_vs and is_eval:
+            pnet = mlp(INFO_DIM, args.hidden, args.layers, ACT_DIM).to(dev)
             rec["policy_loss"] = train_masked(pnet, policy_buf, args.policy_steps, args.batch,
-                                              args.lr, "policy", 1.0, gen,
+                                              args.lr, "policy", 1.0, gen, dev,
                                               args.avg_weight_power)
             export(pnet, wd / "avg.bin")
             if args.round == 1:
@@ -265,12 +339,26 @@ def main() -> None:
                 rec["eval_current"] = run(["eval", "--round", "1", "--policy", str(policy_path),
                                            "--mode", "rm"])
 
-        rec["iter_seconds"] = round(time.time() - it0, 1)
+        if t % args.checkpoint_every == 0 and t < args.iters:
+            save_checkpoint(wd, t, regret_buf, policy_buf, value_net, time.time() - t_start)
+
+        iter_times.append(time.time() - it0)
+        rec["iter_seconds"] = round(iter_times[-1], 1)
         rec["total_seconds"] = round(time.time() - t_start, 1)
         log.write(json.dumps(rec) + "\n")
         log.flush()
+        recent = iter_times[-5:]
+        write_json(wd / "progress.json", {
+            "label": args.label, "iter": t, "iters": args.iters,
+            "sec_per_iter": round(sum(recent) / len(recent), 1),
+            "eta_seconds": round((args.iters - t) * sum(recent) / len(recent)),
+            "elapsed_seconds": round(time.time() - t_start), "updated": time.time(),
+            "last": {k: v for k, v in rec.items() if isinstance(v, (int, float, str))},
+        })
         short = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in rec.items()}
         print(json.dumps(short), flush=True)
+
+    (wd / "DONE").write_text(time.strftime("%Y-%m-%d %H:%M:%S"))
 
 
 if __name__ == "__main__":

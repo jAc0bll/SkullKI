@@ -1,0 +1,55 @@
+name: linux-build
+
+# Proves the server workflow on Linux before money is spent on a rented
+# machine: build with GCC, fast tests, a smoke training run, resume, and the
+# tmux start/status/stop scripts.
+on:
+  push:
+    branches: [gto]
+  workflow_dispatch:
+
+jobs:
+  build-test-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Packages
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build tmux
+
+      - name: Build (GCC, Release)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSK_BUILD_TORCH=OFF -DSK_BUILD_PYTHON=OFF
+          cmake --build build -j"$(nproc)"
+
+      - name: Tests
+        run: |
+          ./build/engine/tests/sk_tests --reporter compact
+          ./build/search/tests/sk_search_tests --reporter compact
+          ./build/solver/tests/sk_solver_tests --reporter compact "~[br]~[eval]~[mccfr]"
+
+      - name: Python (CPU torch)
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -q numpy torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Smoke training, rounds 2-3
+        run: .venv/bin/python -u train/run_all.py --workdir runs/smoke --profile smoke --rounds 2-3
+
+      - name: Restart skips finished work
+        run: |
+          .venv/bin/python -u train/run_all.py --workdir runs/smoke --profile smoke --rounds 2-3 | tee rerun.log
+          ! grep -q "training ===" rerun.log
+          .venv/bin/python train/status.py --workdir runs/smoke
+
+      - name: start / status / stop scripts (tmux)
+        run: |
+          WORKDIR=runs/smoke_tmux bash scripts/start.sh --profile smoke --rounds 2
+          for i in $(seq 1 60); do
+            [ -f runs/smoke_tmux/summary.json ] && break
+            sleep 5
+          done
+          WORKDIR=runs/smoke_tmux bash scripts/status.sh
+          test -f runs/smoke_tmux/summary.json
+          bash scripts/stop.sh
