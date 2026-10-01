@@ -24,6 +24,12 @@ struct GameState {
     std::int8_t  currentPlayer = 0;        // whose turn
 
     // ---- Bidding state ----
+    // Bidding is SIMULTANEOUS in the real game ("Yo-ho-ho"). The engine
+    // collects bids one player at a time for convenience, but no player may
+    // see another's bid before all are submitted — observe() and every search
+    // must hide bids[] of others while phase == Bidding. The next bidder is
+    // always the next player (cyclically) whose bid is still -1, so search can
+    // "un-submit" hidden bids and re-sample them.
     std::int8_t  bids[N_PLAYERS]      = {-1, -1, -1, -1};
     std::int8_t  bidsSubmitted        = 0; // 0..4
 
@@ -44,6 +50,10 @@ struct GameState {
     std::int8_t  tricksWon[N_PLAYERS]    = {0,0,0,0};
     CardSet      captured[N_PLAYERS];                  // cards collected in won tricks (this round)
     std::int32_t pendingBonus[N_PLAYERS] = {0,0,0,0};  // trick-event bonuses accumulated this round
+
+    // Public inference: bit (1 << suit) is set once player p failed to follow
+    // that suit this round, proving they hold no more cards of it.
+    std::uint8_t voidSuits[N_PLAYERS]    = {0,0,0,0};
 
     // ---- Cumulative scores (carry across rounds) ----
     std::int32_t scores[N_PLAYERS] = {0,0,0,0};

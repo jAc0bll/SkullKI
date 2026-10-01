@@ -104,6 +104,7 @@ void distributeWithBelief(GameState& d,
         for (int p = 0; p < N_PLAYERS; ++p) {
             if (p == perspective)  continue;
             if (budget[p] == 0)    continue;
+            if (isColored(c) && ((src.voidSuits[p] >> static_cast<int>(suitOf(c))) & 1u)) continue;
             // Small floor so a player who lost all probability mass still has a chance.
             w[p] = std::max(belief.probs[p][c], 1e-4f);
             sum += w[p];
@@ -137,6 +138,12 @@ GameState beliefDeterminize(const GameState& src,
                             std::mt19937_64& rng)
 {
     GameState d = src;
+    // Simultaneous bidding: hidden bids of others are re-sampled by the search.
+    if (src.phase == Phase::Bidding) {
+        for (int p = 0; p < N_PLAYERS; ++p) {
+            if (p != perspective && d.bids[p] >= 0) { d.bids[p] = -1; --d.bidsSubmitted; }
+        }
+    }
     const Observation obs = observe(src, perspective);
     const BeliefPrediction pred = belief.evaluate(obs);
     distributeWithBelief(d, src, perspective, pred, rng);

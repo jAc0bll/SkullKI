@@ -30,11 +30,14 @@ TEST_CASE("bonusPoints: 14s", "[scoring]") {
     REQUIRE(bonusPoints(cs, 0) == 50);
 }
 
-TEST_CASE("bonusPoints: mermaids in captured pile", "[scoring]") {
+TEST_CASE("bonusPoints: mermaids in captured pile score nothing by themselves", "[scoring]") {
+    // The +20 for a Mermaid captured by a Pirate is awarded at trick
+    // resolution (pendingBonus), not from the captured pile - otherwise a
+    // Mermaid that wins a trick would earn a bonus for capturing herself.
     CardSet cs{};
     cs.add(MERMAID_OFFSET);
     cs.add(MERMAID_OFFSET + 1);
-    REQUIRE(bonusPoints(cs, 0) == 40);
+    REQUIRE(bonusPoints(cs, 0) == 0);
 }
 
 TEST_CASE("bonusPoints: pending bonus carried", "[scoring]") {

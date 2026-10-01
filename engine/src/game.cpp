@@ -14,6 +14,7 @@ void resetForNextRound(GameState& s) {
         s.tricksWon[p]     = 0;
         s.captured[p].clear();
         s.pendingBonus[p]  = 0;
+        s.voidSuits[p]     = 0;
         s.hands[p].clear();
     }
     s.bidsSubmitted    = 0;
@@ -101,11 +102,16 @@ void applyAction(GameState& s, Action a) {
     if (s.phase == Phase::Bidding) {
         assert(a.type == ActionType::Bid);
         assert(a.bid <= s.roundNumber);
+        assert(s.bids[s.currentPlayer] < 0);
         s.bids[s.currentPlayer] = static_cast<std::int8_t>(a.bid);
         ++s.bidsSubmitted;
-        s.currentPlayer = static_cast<std::int8_t>((s.currentPlayer + 1) % N_PLAYERS);
 
-        if (s.bidsSubmitted == N_PLAYERS) {
+        if (s.bidsSubmitted < N_PLAYERS) {
+            // Next player (cyclically) who has not bid yet.
+            int p = s.currentPlayer;
+            do { p = (p + 1) % N_PLAYERS; } while (s.bids[p] >= 0);
+            s.currentPlayer = static_cast<std::int8_t>(p);
+        } else {
             s.phase         = Phase::Playing;
             s.currentPlayer = s.startPlayer;
             s.trickLeader   = s.startPlayer;
@@ -169,6 +175,11 @@ void applyAction(GameState& s, Action a) {
             s.freeTrick = true;
         }
     } else {
+        // Failing to follow an established lead suit with a colored card
+        // publicly proves the player is void in that suit.
+        if (s.leadSuit != Suit::None && isColored(c) && suitOf(c) != s.leadSuit) {
+            s.voidSuits[p] |= static_cast<std::uint8_t>(1u << static_cast<int>(s.leadSuit));
+        }
         // Follow card: in escape-led tricks, the first colored card sets leadSuit.
         if (!s.freeTrick && s.leadSuit == Suit::None && isColored(c)) {
             s.leadSuit = suitOf(c);

@@ -179,6 +179,9 @@ PYBIND11_MODULE(skullking, m) {
         .def_readwrite("bids_submitted",   &sk::GameState::bidsSubmitted)
         .def_property_readonly("bids",       [](const sk::GameState& s) { return intArray(s.bids); })
         .def_property_readonly("tricks_won", [](const sk::GameState& s) { return intArray(s.tricksWon); })
+        .def_property_readonly("void_suits", [](const sk::GameState& s) {
+            std::vector<int> v(s.voidSuits, s.voidSuits + sk::N_PLAYERS); return v;
+        })
         .def_property_readonly("scores", [](const sk::GameState& s) {
             std::vector<int> v(s.scores, s.scores + sk::N_PLAYERS); return v;
         })

@@ -78,3 +78,56 @@ TEST_CASE("Determinizer: respects already-played cards (captured + current trick
         });
     }
 }
+
+TEST_CASE("Determinizer: hidden bids are un-submitted during bidding", "[determinize][bidding]") {
+    std::mt19937_64 rng(21);
+    GameState s = initialState(0);
+    s.roundNumber = 3;
+    dealRound(s, rng);
+    applyAction(s, Action::makeBid(3));   // player 0
+    applyAction(s, Action::makeBid(2));   // player 1 -> now player 2 to act
+
+    GameState d = determinize(s, 2, rng);
+    REQUIRE(d.bids[0] == -1);
+    REQUIRE(d.bids[1] == -1);
+    REQUIRE(d.bidsSubmitted == 0);
+    REQUIRE(d.currentPlayer == 2);
+
+    // The game can be completed from the determinized state.
+    applyAction(d, Action::makeBid(1));
+    REQUIRE(d.currentPlayer == 3);
+    applyAction(d, Action::makeBid(1));
+    REQUIRE(d.currentPlayer == 0);
+    applyAction(d, Action::makeBid(0));
+    REQUIRE(d.currentPlayer == 1);
+    applyAction(d, Action::makeBid(0));
+    REQUIRE(d.phase == Phase::Playing);
+}
+
+TEST_CASE("Determinizer: respects publicly revealed voids", "[determinize][voids]") {
+    std::mt19937_64 rng(77);
+    GameState s = initialState(0);
+    s.roundNumber = 8;
+    dealRound(s, rng);
+    s.phase = Phase::Playing;
+    s.voidSuits[1] = (1u << static_cast<int>(Suit::Yellow)) | (1u << static_cast<int>(Suit::Black));
+    s.voidSuits[3] = (1u << static_cast<int>(Suit::Green));
+    // Make the true hands consistent with these voids so a valid world exists.
+    for (int p : {1, 3}) {
+        std::vector<Card> bad;
+        s.hands[p].forEach([&](Card c) {
+            if (isColored(c) && ((s.voidSuits[p] >> static_cast<int>(suitOf(c))) & 1u)) bad.push_back(c);
+        });
+        for (Card c : bad) { s.hands[p].remove(c); s.captured[0].add(c); }
+    }
+
+    for (int trial = 0; trial < 200; ++trial) {
+        GameState d = determinize(s, 0, rng);
+        for (int p : {1, 3}) {
+            REQUIRE(d.hands[p].count() == s.hands[p].count());
+            d.hands[p].forEach([&](Card c) {
+                if (isColored(c)) REQUIRE(((s.voidSuits[p] >> static_cast<int>(suitOf(c))) & 1u) == 0);
+            });
+        }
+    }
+}

@@ -129,3 +129,63 @@ TEST_CASE("Tigress played as lead-escape lets next colored set lead suit", "[gam
     REQUIRE(s.tricksWon[3] == 1);
     REQUIRE(s.trickLeader == 3);
 }
+
+TEST_CASE("Bidding: next bidder is the next player without a bid", "[game][bidding]") {
+    // Search un-submits hidden bids (simultaneous bidding); the state machine
+    // must then route turns to whoever still has to bid.
+    auto s = initialState(0);
+    std::mt19937_64 rng(5);
+    dealRound(s, rng);
+    s.bids[1] = 1; s.bids[3] = 0; s.bidsSubmitted = 2;
+    s.currentPlayer = 0;
+
+    applyAction(s, Action::makeBid(1));
+    REQUIRE(s.phase == Phase::Bidding);
+    REQUIRE(s.currentPlayer == 2);
+    applyAction(s, Action::makeBid(0));
+    REQUIRE(s.phase == Phase::Playing);
+    REQUIRE(s.currentPlayer == s.startPlayer);
+    REQUIRE(s.bids[0] == 1);
+    REQUIRE(s.bids[2] == 0);
+}
+
+TEST_CASE("Void tracking: failing to follow marks the led suit void", "[game][voids]") {
+    GameState s = initialState(0);
+    s.roundNumber = 2;
+    s.phase = Phase::Playing;
+    s.bidsSubmitted = 4;
+    for (int p = 0; p < N_PLAYERS; ++p) s.bids[p] = 0;
+    s.hands[0].add(makeColored(Suit::Yellow, 5));  s.hands[0].add(makeColored(Suit::Green, 1));
+    s.hands[1].add(makeColored(Suit::Green, 7));   s.hands[1].add(makeColored(Suit::Purple, 2));
+    s.hands[2].add(PIRATE_OFFSET);                 s.hands[2].add(makeColored(Suit::Yellow, 9));
+    s.hands[3].add(makeColored(Suit::Black, 4));   s.hands[3].add(makeColored(Suit::Black, 6));
+
+    applyAction(s, Action::makePlay(makeColored(Suit::Yellow, 5)));
+    applyAction(s, Action::makePlay(makeColored(Suit::Green, 7)));   // no yellow -> void
+    applyAction(s, Action::makePlay(PIRATE_OFFSET));                 // special: proves nothing
+    applyAction(s, Action::makePlay(makeColored(Suit::Black, 4)));   // trumping -> void in yellow
+
+    const auto Y = 1u << static_cast<int>(Suit::Yellow);
+    REQUIRE(s.voidSuits[0] == 0);
+    REQUIRE(s.voidSuits[1] == Y);
+    REQUIRE(s.voidSuits[2] == 0);
+    REQUIRE(s.voidSuits[3] == Y);
+}
+
+TEST_CASE("Void tracking: escape-led trick, first colored card sets suit without a void", "[game][voids]") {
+    GameState s = initialState(0);
+    s.roundNumber = 1;
+    s.phase = Phase::Playing;
+    s.bidsSubmitted = 4;
+    for (int p = 0; p < N_PLAYERS; ++p) s.bids[p] = 0;
+    s.hands[0].add(ESCAPE_OFFSET);
+    s.hands[1].add(makeColored(Suit::Green, 7));
+    s.hands[2].add(makeColored(Suit::Purple, 3));
+    s.hands[3].add(makeColored(Suit::Green, 2));
+
+    applyAction(s, Action::makePlay(ESCAPE_OFFSET));
+    applyAction(s, Action::makePlay(makeColored(Suit::Green, 7)));   // sets green, no void
+    REQUIRE(s.voidSuits[1] == 0);
+    applyAction(s, Action::makePlay(makeColored(Suit::Purple, 3)));  // must have no green
+    REQUIRE(s.voidSuits[2] == (1u << static_cast<int>(Suit::Green)));
+}

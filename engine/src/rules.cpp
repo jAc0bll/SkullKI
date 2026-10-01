@@ -19,6 +19,7 @@ TrickResult resolveTrick(const Card* cards,
     int firstMermaid = -1;
     int firstPirate  = -1;
     int pirateCount  = 0;
+    int mermaidCount = 0;
 
     for (int i = 0; i < n; ++i) {
         const Card c = cards[i];
@@ -26,6 +27,7 @@ TrickResult resolveTrick(const Card* cards,
             if (skIdx < 0) skIdx = i;
         } else if (isMermaid(c)) {
             if (firstMermaid < 0) firstMermaid = i;
+            ++mermaidCount;
         } else if (effPirate(c, tigressAsPirate)) {
             if (firstPirate < 0) firstPirate = i;
             ++pirateCount;
@@ -45,7 +47,9 @@ TrickResult resolveTrick(const Card* cards,
         return r;
     }
     if (firstPirate >= 0) {
+        // +20 per Mermaid captured by a Pirate (incl. Tigress-as-Pirate).
         r.winner = players[firstPirate];
+        r.bonusForWinner = 20 * mermaidCount;
         return r;
     }
     if (firstMermaid >= 0) {

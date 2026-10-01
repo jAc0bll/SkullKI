@@ -15,11 +15,12 @@ std::int32_t bidPoints(int bid, int won, int roundSize) {
 
 std::int32_t bonusPoints(const CardSet& captured, std::int32_t pendingBonus) {
     std::int32_t bonus = pendingBonus;
+    // 14s count no matter who played them. Mermaid captures are NOT counted
+    // here: they score only when taken by a Pirate, which resolveTrick
+    // already folds into pendingBonus.
     captured.forEach([&](Card c) {
         if (is14(c)) {
             bonus += isTrump(c) ? 20 : 10;
-        } else if (isMermaid(c)) {
-            bonus += 20;
         }
     });
     return bonus;

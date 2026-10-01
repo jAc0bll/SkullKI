@@ -122,6 +122,37 @@ TEST_CASE("Trick: Pirate + SK + Mermaid → Mermaid wins, +40 only", "[trick]") 
     REQUIRE(r.bonusForWinner == 40);
 }
 
+TEST_CASE("Trick: pirate capturing mermaids earns +20 each", "[trick][bonus]") {
+    auto r = resolve({
+        {MERMAID_OFFSET,     0},
+        {PIRATE_OFFSET,      1},
+        {MERMAID_OFFSET + 1, 2},
+        {makeColored(Suit::Black, 3), 3},
+    });
+    REQUIRE(r.winner == 1);
+    REQUIRE(r.bonusForWinner == 40);
+}
+
+TEST_CASE("Trick: Tigress-as-pirate capturing a mermaid earns +20", "[trick][bonus]") {
+    auto r = resolve({
+        {MERMAID_OFFSET, 0},
+        {TIGRESS,        1},
+    }, /*tigressAsPirate=*/true);
+    REQUIRE(r.winner == 1);
+    REQUIRE(r.bonusForWinner == 20);
+}
+
+TEST_CASE("Trick: mermaid winning (no pirate) earns no mermaid bonus", "[trick][bonus]") {
+    // Neither her own card nor the second (later) mermaid count as "captured by a pirate".
+    auto r = resolve({
+        {makeColored(Suit::Yellow, 5), 0},
+        {MERMAID_OFFSET,               1},
+        {MERMAID_OFFSET + 1,           2},
+    });
+    REQUIRE(r.winner == 1);
+    REQUIRE(r.bonusForWinner == 0);
+}
+
 TEST_CASE("Trick: escapes lose to everything", "[trick]") {
     auto r = resolve({
         {ESCAPE_OFFSET,                 0},

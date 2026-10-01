@@ -70,3 +70,34 @@ TEST_CASE("encode: changing only opponent hands does NOT change the encoding", "
 
     REQUIRE(encA == encB);
 }
+
+TEST_CASE("observe: bids are simultaneous - hidden during bidding, revealed after", "[observation][bidding]") {
+    std::mt19937_64 rng(3);
+    GameState s = initialState(0);
+    s.roundNumber = 3;
+    dealRound(s, rng);
+
+    applyAction(s, Action::makeBid(2));   // player 0
+    applyAction(s, Action::makeBid(1));   // player 1
+
+    // Player 2 must not see bids of 0 and 1 yet; player 0 sees only its own.
+    Observation o2 = observe(s, 2);
+    REQUIRE(o2.s.bids[0] == -1);
+    REQUIRE(o2.s.bids[1] == -1);
+    Observation o0 = observe(s, 0);
+    REQUIRE(o0.s.bids[0] == 2);
+    REQUIRE(o0.s.bids[1] == -1);
+
+    // Encoding for player 2 is independent of what 0 and 1 bid.
+    GameState t = s;
+    t.bids[0] = 0; t.bids[1] = 3;
+    REQUIRE(encode(observe(t, 2)) == encode(o2));
+
+    applyAction(s, Action::makeBid(0));
+    applyAction(s, Action::makeBid(3));
+    REQUIRE(s.phase == Phase::Playing);
+    Observation after = observe(s, 2);
+    REQUIRE(after.s.bids[0] == 2);
+    REQUIRE(after.s.bids[1] == 1);
+    REQUIRE(after.s.bids[3] == 3);
+}
