@@ -1,5 +1,6 @@
 add_library(sk_solver STATIC
     src/round.cpp
+    src/abstraction.cpp
     src/deals.cpp
     src/table.cpp
     src/dcfr_update.cpp

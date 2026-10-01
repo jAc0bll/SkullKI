@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sk/solver/abstraction.hpp"
 #include "sk/solver/round.hpp"
 
 #include <array>
@@ -27,17 +28,19 @@ struct InfoNode {
 };
 
 // Read-only view of a strategy profile, as needed by best response and
-// evaluation. `probs` must write nA probabilities for the infoset.
+// evaluation: the probabilities of `player`'s legal actions (in the order of
+// `legal`) at a real decision point. Must depend only on what `player` knows.
 class PolicyView {
 public:
     virtual ~PolicyView() = default;
-    virtual void probs(const InfoKey& key, int nA, double* out) const = 0;
+    virtual void probs(const RoundState& rs, int player, const ActionList& legal,
+                       double* out) const = 0;
 };
 
 class UniformPolicy final : public PolicyView {
 public:
-    void probs(const InfoKey&, int nA, double* out) const override {
-        for (int i = 0; i < nA; ++i) out[i] = 1.0 / nA;
+    void probs(const RoundState&, int, const ActionList& legal, double* out) const override {
+        for (int i = 0; i < legal.n; ++i) out[i] = 1.0 / legal.n;
     }
 };
 
@@ -76,13 +79,17 @@ private:
     static std::size_t shardOf(const InfoKey& key);
 };
 
-// The average strategy stored in a table.
+// The average strategy stored in a table built with abstraction `abs`.
+// Not thread-safe against concurrent table writes.
 class AveragePolicy final : public PolicyView {
 public:
-    explicit AveragePolicy(const InfosetTable& t) : t_(t) {}
-    void probs(const InfoKey& key, int nA, double* out) const override;
+    explicit AveragePolicy(const InfosetTable& t, const Abstraction& abs = exactAbstraction())
+        : t_(t), abs_(abs) {}
+    void probs(const RoundState& rs, int player, const ActionList& legal,
+               double* out) const override;
 private:
     const InfosetTable& t_;
+    const Abstraction&  abs_;
 };
 
 } // namespace sk::solver

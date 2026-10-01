@@ -1,0 +1,60 @@
+﻿Skull King round 1, 4 players, utility=relative, method=mccfr (65536 deals/batch, abstraction=suit-iso, prune=0.95 after 20), 12588740 kind-deals
+iter     1 | infosets     11860 | solve     0.0s | NashConv   31.2806 | gain  6.3138  8.2645  8.4054  8.2970 | value   +0.621   -0.101   -0.234   -0.286
+           traversals 2.62e+05, nodes/traversal 15.7
+iter    40 | infosets     96785 | solve     1.5s | NashConv    0.1886 | gain  0.0056  0.0054  0.0118  0.1658 | value   -1.271   +0.562   +0.567   +0.143
+           traversals 1.05e+07, nodes/traversal 12.6
+iter    80 | infosets    112788 | solve     3.1s | NashConv    0.1331 | gain  0.0039  0.0021  0.0050  0.1221 | value   -1.283   +0.546   +0.555   +0.181
+           traversals 2.1e+07, nodes/traversal 11.0
+iter   120 | infosets    123708 | solve     4.7s | NashConv    0.0984 | gain  0.0020  0.0024  0.0028  0.0912 | value   -1.288   +0.533   +0.545   +0.211
+           traversals 3.15e+07, nodes/traversal 10.5
+iter   160 | infosets    131939 | solve     6.4s | NashConv    0.0740 | gain  0.0013  0.0016  0.0023  0.0687 | value   -1.293   +0.525   +0.536   +0.232
+           traversals 4.19e+07, nodes/traversal 10.2
+iter   200 | infosets    138544 | solve     8.3s | NashConv    0.0577 | gain  0.0012  0.0018  0.0023  0.0525 | value   -1.296   +0.519   +0.530   +0.248
+           traversals 5.24e+07, nodes/traversal 10.1
+
+Round 1 equilibrium bidding: P(bid 1) by seat (seat 1 leads the trick)
+card        seat 1  seat 2  seat 3  seat 4
+Yellow 1     0.000   0.000   0.000   0.000
+Yellow 2     0.000   0.000   0.000   0.000
+Yellow 3     0.000   0.000   0.000   0.000
+Yellow 4     0.000   0.000   0.000   0.000
+Yellow 5     0.000   0.000   0.000   0.000
+Yellow 6     0.000   0.000   0.000   0.000
+Yellow 7     0.000   0.000   0.000   0.000
+Yellow 8     0.000   0.000   0.000   0.000
+Yellow 9     0.000   0.000   0.000   0.000
+Yellow 10    0.000   0.000   0.000   0.000
+Yellow 11    0.000   0.000   0.000   0.000
+Yellow 12    0.000   0.000   0.000   0.000
+Yellow 13    0.000   0.000   0.000   0.000
+Yellow 14    0.003   0.000   0.000   0.000
+Black 1      0.002   0.002   0.003   0.002
+Black 2      0.003   0.004   0.003   0.003
+Black 3      0.004   0.005   0.005   0.007
+Black 4      0.024   0.028   0.043   0.014
+Black 5      0.987   0.943   0.986   0.989
+Black 6      0.996   0.994   0.993   0.996
+Black 7      0.996   0.999   0.994   0.999
+Black 8      1.000   1.000   1.000   0.998
+Black 9      1.000   1.000   1.000   0.999
+Black 10     1.000   1.000   1.000   1.000
+Black 11     1.000   1.000   1.000   1.000
+Black 12     1.000   1.000   1.000   1.000
+Black 13     1.000   1.000   1.000   1.000
+Black 14     1.000   1.000   1.000   1.000
+Escape       0.000   0.000   0.000   0.000
+Mermaid      1.000   1.000   1.000   1.000
+Pirate       1.000   1.000   1.000   1.000
+Tigress      1.000   1.000   1.000   1.000
+SkullKing    1.000   1.000   1.000   1.000
+suit-symmetry check: max |P_green/purple - P_yellow| = 0.00e+00
+
+Tigress declared as Pirate (reach-weighted):
+  seat 1, own bid 0: off-path (never bid with Tigress)
+  seat 1, own bid 1: 1.000
+  seat 2, own bid 0: off-path (never bid with Tigress)
+  seat 2, own bid 1: 0.933
+  seat 3, own bid 0: 0.500
+  seat 3, own bid 1: 0.874
+  seat 4, own bid 0: 0.500
+  seat 4, own bid 1: 0.796

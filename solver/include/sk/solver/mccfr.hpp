@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sk/solver/abstraction.hpp"
 #include "sk/solver/dcfr_update.hpp"
 #include "sk/solver/round.hpp"
 #include "sk/solver/table.hpp"
@@ -16,6 +17,14 @@ struct MCCFRConfig {
     // Deals sampled per update step. Every deal is traversed once per player.
     int           dealsPerBatch = 1 << 16;
     DCFRParams    dcfr{};
+    // Infoset abstraction used for the table (default: the real game).
+    std::shared_ptr<const Abstraction> abstraction = std::make_shared<ExactAbstraction>();
+    // Regret-based pruning (Pluribus): after `pruneAfterBatch` batches, a
+    // traverser action whose current probability is 0 is skipped with
+    // probability `pruneProb` (no regret update for it in that traversal).
+    // Keeps the traverser's tree small once strategies become sparse.
+    double        pruneProb       = 0.0;
+    int           pruneAfterBatch = 0;
 };
 
 // External-sampling Monte Carlo CFR (Lanctot et al. 2009) over one round.

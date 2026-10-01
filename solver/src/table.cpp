@@ -49,14 +49,20 @@ std::size_t InfosetTable::size() const {
     return n;
 }
 
-void AveragePolicy::probs(const InfoKey& key, int nA, double* out) const {
-    const InfoNode* n = t_.find(key);
+void AveragePolicy::probs(const RoundState& rs, int player, const ActionList& legal,
+                          double* out) const
+{
+    InfosetView v;
+    abs_.view(rs, player, legal, v);
+    const InfoNode* n = t_.find(v.key);
     if (!n) {
-        for (int a = 0; a < nA; ++a) out[a] = 1.0 / nA;
+        for (int a = 0; a < legal.n; ++a) out[a] = 1.0 / legal.n;
         return;
     }
-    assert(n->nA == nA);
-    n->averageStrategy(out);
+    assert(n->nA == v.nSlots);
+    std::array<double, ActionList::CAPACITY> avg;
+    n->averageStrategy(avg.data());
+    for (int a = 0; a < legal.n; ++a) out[a] = avg[v.slot[a]];
 }
 
 } // namespace sk::solver

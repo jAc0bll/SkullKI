@@ -17,8 +17,9 @@ struct Worker {
     InfosetTable*      table = nullptr;
     DeltaMap           deltas;
     std::mt19937_64    rng;
-    InfoKey            key;
+    InfosetView        view;
     std::uint64_t      nodes = 0;   // walk() calls, for cost measurements
+    bool               prune = false;
 
     std::array<CardSet, N_PLAYERS> sampleDeal() {
         std::array<Card, N_CARDS> deck;
@@ -53,28 +54,38 @@ struct Worker {
             return walk(child, traverser);
         }
 
-        infosetKey(rs, p, key);
-        InfoNode& node = table->findOrCreate(key, al.n);
+        cfg->abstraction->view(rs, p, al, view);
+        InfoNode& node = table->findOrCreate(view.key, view.nSlots);
         Delta& delta = deltas[&node];
-        const double* sigma = node.current.data();
+        // Strategy in real action order (view is reused by the recursion).
+        std::array<double, CAP> sigma;
+        std::array<std::uint8_t, CAP> slot;
+        for (int a = 0; a < al.n; ++a) {
+            slot[a]  = view.slot[a];
+            sigma[a] = node.current[slot[a]];
+        }
+        std::uniform_real_distribution<double> u(0.0, 1.0);
 
         if (p == traverser) {
             std::array<double, CAP> v{};
+            std::array<bool, CAP> explored{};
             double ev = 0.0;
             for (int a = 0; a < al.n; ++a) {
+                if (prune && sigma[a] == 0.0 && u(rng) < cfg->pruneProb) continue;
+                explored[a] = true;
                 RoundState child = rs;
                 applyRound(child, al[a]);
                 v[a] = walk(child, traverser);
                 ev += sigma[a] * v[a];
             }
-            for (int a = 0; a < al.n; ++a) delta.dR[a] += v[a] - ev;
+            for (int a = 0; a < al.n; ++a)
+                if (explored[a]) delta.dR[slot[a]] += v[a] - ev;
             return ev;
         }
 
         // Opponent node: stochastically-weighted average-strategy update,
         // then follow one sampled action.
-        for (int a = 0; a < al.n; ++a) delta.dS[a] += sigma[a];
-        std::uniform_real_distribution<double> u(0.0, 1.0);
+        for (int a = 0; a < al.n; ++a) delta.dS[slot[a]] += sigma[a];
         double r = u(rng);
         int pick = al.n - 1;
         for (int a = 0; a < al.n; ++a) {
@@ -98,6 +109,7 @@ void ExternalSamplingMCCFR::runBatch() {
     for (int w = 0; w < nThreads; ++w) {
         workers[w].cfg = &cfg_;
         workers[w].table = &table_;
+        workers[w].prune = cfg_.pruneProb > 0.0 && batches_ > cfg_.pruneAfterBatch;
         // Distinct, reproducible stream per (batch, worker).
         workers[w].rng.seed(cfg_.seed * 0x9E3779B97F4A7C15ull + batches_ * 1315423911ull + w);
     }

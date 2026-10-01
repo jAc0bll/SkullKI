@@ -15,14 +15,12 @@ using Values = std::array<double, N_PLAYERS>;
 struct BidCache {
     std::array<bool, N_PLAYERS> have{};
     std::array<std::array<double, CAP>, N_PLAYERS> probs{};
-    std::array<InfoKey, N_PLAYERS> key;
 
     void reset() { have.fill(false); }
 
-    const double* get(const RoundState& rs, int p, int nA, const PolicyView& pol) {
+    const double* get(const RoundState& rs, int p, const ActionList& al, const PolicyView& pol) {
         if (!have[p]) {
-            biddingKey(rs.round, p, rs.s.hands[p], key[p]);
-            pol.probs(key[p], nA, probs[p].data());
+            pol.probs(rs, p, al, probs[p].data());
             have[p] = true;
         }
         return probs[p].data();
@@ -37,7 +35,6 @@ struct ValueWorker {
     const PolicyView* pol = nullptr;
     Values  value{};
     BidCache bids;
-    InfoKey key;
 
     void runDeal(const KindDeal& d) {
         const RoundState rs = makeRoundState(cfg->round, realizeDeal(d, cfg->round));
@@ -64,10 +61,9 @@ struct ValueWorker {
         std::array<double, CAP> local;
         const double* probs;
         if (rs.s.phase == Phase::Bidding) {
-            probs = bids.get(rs, p, al.n, *pol);
+            probs = bids.get(rs, p, al, *pol);
         } else {
-            infosetKey(rs, p, key);
-            pol->probs(key, al.n, local.data());
+            pol->probs(rs, p, al, local.data());
             probs = local.data();
         }
         out.fill(0.0);
@@ -134,11 +130,9 @@ struct BRWorker {
             std::array<double, CAP> local;
             const double* probs;
             if (rs.s.phase == Phase::Bidding) {
-                probs = bids.get(rs, p, al.n, *pol);
+                probs = bids.get(rs, p, al, *pol);
             } else {
-                InfoKey k;
-                infosetKey(rs, p, k);
-                pol->probs(k, al.n, local.data());
+                pol->probs(rs, p, al, local.data());
                 probs = local.data();
             }
             double v = 0.0;

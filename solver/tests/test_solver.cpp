@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
+#include "sk/solver/abstraction.hpp"
 #include "sk/solver/best_response.hpp"
 #include "sk/solver/cfr.hpp"
 #include "sk/solver/deals.hpp"
@@ -183,9 +184,10 @@ namespace {
 class FixedBidPolicy final : public PolicyView {
 public:
     FixedBidPolicy(int player, int bid) : player_(player), bid_(bid) {}
-    void probs(const InfoKey& key, int nA, double* out) const override {
-        const bool mine = key[2] == 0 && key[1] == player_ && bid_ < nA;
-        for (int a = 0; a < nA; ++a) out[a] = mine ? (a == bid_ ? 1.0 : 0.0) : 1.0 / nA;
+    void probs(const RoundState& rs, int player, const ActionList& legal,
+               double* out) const override {
+        const bool mine = rs.s.phase == Phase::Bidding && player == player_ && bid_ < legal.n;
+        for (int a = 0; a < legal.n; ++a) out[a] = mine ? (a == bid_ ? 1.0 : 0.0) : 1.0 / legal.n;
     }
 private:
     int player_, bid_;
@@ -249,4 +251,79 @@ TEST_CASE("MCCFR on round 1 is far less exploitable than uniform", "[solver][mcc
     e.round = 1;
     const double nc = exploitability(AveragePolicy(m.table()), e).nashConv;
     REQUIRE(nc < 1.0);   // uniform: ~31
+}
+
+namespace {
+// Relabel Yellow/Green/Purple by perm; Black and specials stay.
+Card permuteCard(Card c, const int* perm) {
+    if (!isColored(c) || suitOf(c) == Suit::Black) return c;
+    return static_cast<Card>(perm[static_cast<int>(suitOf(c))] * CARDS_PER_SUIT + (c % CARDS_PER_SUIT));
+}
+} // namespace
+
+TEST_CASE("Suit isomorphism: permuted situations share key, actions keep their slot", "[solver][abstraction]") {
+    const SuitIsomorphism iso;
+    const int perm[3] = {2, 0, 1};
+    std::mt19937_64 rng(31);
+    for (int trial = 0; trial < 300; ++trial) {
+        const int round = 2 + trial % 5;
+        const auto hands = randomHands(round, rng);
+        std::array<CardSet, N_PLAYERS> permHands{};
+        for (int p = 0; p < N_PLAYERS; ++p)
+            hands[p].forEach([&](Card c) { permHands[p].add(permuteCard(c, perm)); });
+
+        RoundState a = makeRoundState(round, hands);
+        RoundState b = makeRoundState(round, permHands);
+        // Play a random number of random actions, mirrored in b.
+        std::uniform_int_distribution<int> steps(0, N_PLAYERS + 2 * round);
+        const int n = steps(rng);
+        for (int i = 0; i < n && !a.terminal(); ++i) {
+            ActionList al;
+            legalKindActions(a.s, al);
+            std::uniform_int_distribution<int> d(0, al.n - 1);
+            Action x = al[d(rng)];
+            Action y = x;
+            if (x.type == ActionType::Play) y.card = permuteCard(x.card, perm);
+            applyRound(a, x);
+            applyRound(b, y);
+        }
+        if (a.terminal()) continue;
+
+        const int p = a.s.currentPlayer;
+        ActionList la, lb;
+        legalKindActions(a.s, la);
+        legalKindActions(b.s, lb);
+        REQUIRE(la.n == lb.n);
+        InfosetView va, vb;
+        iso.view(a, p, la, va);
+        iso.view(b, p, lb, vb);
+        REQUIRE(va.key == vb.key);
+        for (int i = 0; i < la.n; ++i) {
+            // Find the action in b that corresponds to la[i].
+            Action y = la[i];
+            if (y.type == ActionType::Play) y.card = permuteCard(y.card, perm);
+            int j = -1;
+            for (int k = 0; k < lb.n; ++k) {
+                const bool same = lb[k].type == y.type &&
+                    (y.type != ActionType::Play || kindOf(lb[k].card) == kindOf(y.card)) &&
+                    (y.type != ActionType::Bid || lb[k].bid == y.bid) &&
+                    (y.type != ActionType::TigressMode || lb[k].asPirate == y.asPirate);
+                if (same) j = k;
+            }
+            REQUIRE(j >= 0);
+            // Slots may only differ when the situation is self-symmetric.
+            REQUIRE((va.slot[i] == vb.slot[j] || va.symmetric));
+        }
+    }
+}
+
+TEST_CASE("MCCFR with suit isomorphism needs fewer infosets", "[solver][abstraction][mccfr]") {
+    MCCFRConfig c;
+    c.round = 1;
+    c.dealsPerBatch = 50000;
+    ExternalSamplingMCCFR exact(c);
+    c.abstraction = makeAbstraction("suit-iso");
+    ExternalSamplingMCCFR iso(c);
+    for (int i = 0; i < 5; ++i) { exact.runBatch(); iso.runBatch(); }
+    REQUIRE(iso.table().size() < exact.table().size());
 }

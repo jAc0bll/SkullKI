@@ -38,6 +38,9 @@ struct Args {
     int     dealsPerBatch = 1 << 16;
     DCFRParams dcfr{};
     std::uint64_t seed = 1;
+    std::string abstraction = "exact";
+    double  pruneProb  = 0.0;
+    int     pruneAfter = 0;
     int     round     = 1;
     int     iters     = 200;
     int     evalEvery = 20;
@@ -49,8 +52,10 @@ struct Args {
 
 void usage() {
     std::puts(
-        "usage: sk_solve_round [--round R] [--iters N] [--eval-every K] [--threads T]\n"
-        "                      [--utility relative|absolute] [--out FILE.csv] [--dump-all]");
+        "usage: sk_solve_round [--method dcfr|mccfr] [--round R] [--iters N] [--eval-every K]\n"
+        "                      [--threads T] [--utility relative|absolute] [--out FILE.csv]\n"
+        "                      [--dump-all] [--deals-per-batch N] [--linear] [--seed S]\n"
+        "                      [--abstraction exact|suit-iso] [--prune P] [--prune-after B]");
 }
 
 Args parse(int argc, char** argv) {
@@ -69,6 +74,9 @@ Args parse(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--deals-per-batch")) a.dealsPerBatch = std::atoi(next());
         else if (!std::strcmp(argv[i], "--seed"))       a.seed = std::strtoull(next(), nullptr, 10);
         else if (!std::strcmp(argv[i], "--linear"))     a.dcfr = DCFRParams{1.0, 1.0, 1.0};
+        else if (!std::strcmp(argv[i], "--abstraction")) a.abstraction = next();
+        else if (!std::strcmp(argv[i], "--prune"))      a.pruneProb = std::atof(next());
+        else if (!std::strcmp(argv[i], "--prune-after")) a.pruneAfter = std::atoi(next());
         else if (!std::strcmp(argv[i], "--method")) {
             const std::string m = next();
             if (m == "dcfr")       a.method = Method::DCFR;
@@ -115,7 +123,18 @@ std::vector<std::string> actionNamesForKey(const InfoKey& key, int nA) {
     return names;
 }
 
-void printRound1Chart(const InfosetTable& table) {
+// P(bid) for `seat` holding `hand` in round 1, read through the policy.
+void bidProbs(const PolicyView& pol, int seat, const CardSet& hand, double* out) {
+    std::array<CardSet, N_PLAYERS> hands{};
+    hands[seat] = hand;
+    RoundState rs = makeRoundState(1, hands);
+    rs.s.currentPlayer = static_cast<std::int8_t>(seat);
+    ActionList al;
+    legalKindActions(rs.s, al);
+    pol.probs(rs, seat, al, out);
+}
+
+void printRound1Chart(const InfosetTable& table, const PolicyView& pol) {
     std::printf("\nRound 1 equilibrium bidding: P(bid 1) by seat (seat 1 leads the trick)\n");
     std::printf("%-10s", "card");
     for (int seat = 0; seat < N_PLAYERS; ++seat) std::printf("  seat %d", seat + 1);
@@ -126,10 +145,8 @@ void printRound1Chart(const InfosetTable& table) {
         for (int seat = 0; seat < N_PLAYERS; ++seat) {
             CardSet hand;
             hand.add(firstCardOfKind(k));
-            InfoKey key;
-            biddingKey(1, seat, hand, key);
-            double pr[2] = {0.5, 0.5};
-            if (const InfoNode* n = table.find(key)) n->averageStrategy(pr);
+            double pr[2];
+            bidProbs(pol, seat, hand, pr);
             std::printf("  %6.3f", pr[1]);
         }
         std::printf("\n");
@@ -152,10 +169,8 @@ void printRound1Chart(const InfosetTable& table) {
             for (Suit s : {Suit::Yellow, Suit::Green, Suit::Purple}) {
                 CardSet hand;
                 hand.add(makeColored(s, v));
-                InfoKey key;
-                biddingKey(1, seat, hand, key);
-                double pr[2] = {0.5, 0.5};
-                if (const InfoNode* n = table.find(key)) n->averageStrategy(pr);
+                double pr[2];
+                bidProbs(pol, seat, hand, pr);
                 if (s == Suit::Yellow) { ref[0] = pr[0]; ref[1] = pr[1]; }
                 else maxDiff = std::max(maxDiff, std::abs(pr[1] - ref[1]));
             }
@@ -185,10 +200,8 @@ void printRound1Chart(const InfosetTable& table) {
         // infosets are off the equilibrium path and their strategy is arbitrary.
         CardSet hand;
         hand.add(TIGRESS);
-        InfoKey key;
-        biddingKey(1, k.first, hand, key);
-        double bid[2] = {0.5, 0.5};
-        if (const InfoNode* n = table.find(key)) n->averageStrategy(bid);
+        double bid[2];
+        bidProbs(pol, k.first, hand, bid);
         if (bid[k.second] < 1e-6) {
             std::printf("  seat %d, own bid %d: off-path (never bid with Tigress)\n", k.first + 1,
                         k.second);
@@ -234,7 +247,9 @@ int main(int argc, char** argv) {
     std::printf("Skull King round %d, %d players, utility=%s, method=%s",
                 args.round, N_PLAYERS, args.utility == Utility::Relative ? "relative" : "absolute",
                 args.method == Method::DCFR ? "dcfr" : "mccfr");
-    if (args.method == Method::MCCFR) std::printf(" (%d deals/batch)", args.dealsPerBatch);
+    if (args.method == Method::MCCFR)
+        std::printf(" (%d deals/batch, abstraction=%s, prune=%.2f after %d)", args.dealsPerBatch,
+                    args.abstraction.c_str(), args.pruneProb, args.pruneAfter);
     if (exact) std::printf(", %zu kind-deals", countDeals(args.round));
     std::printf("\n");
 
@@ -257,9 +272,14 @@ int main(int argc, char** argv) {
         mc.seed = args.seed;
         mc.dealsPerBatch = args.dealsPerBatch;
         mc.dcfr = args.dcfr;
+        mc.abstraction = makeAbstraction(args.abstraction);
+        mc.pruneProb = args.pruneProb;
+        mc.pruneAfterBatch = args.pruneAfter;
         sampled = std::make_unique<ExternalSamplingMCCFR>(mc);
     }
     const InfosetTable& table = fullWidth ? fullWidth->table() : sampled->table();
+    const Abstraction& abs = fullWidth ? exactAbstraction() : *sampled->config().abstraction;
+    const AveragePolicy policy(table, abs);
 
     EvalConfig ec;
     ec.round = args.round;
@@ -275,20 +295,22 @@ int main(int argc, char** argv) {
 
         if (it == 1 || it % args.evalEvery == 0 || it == args.iters) {
             if (exact) {
-                const auto rep = exploitability(AveragePolicy(table), ec);
+                const auto rep = exploitability(policy, ec);
                 printReport(it, table.size(), solveSecs, rep);
             } else {
                 std::printf("iter %5d | infosets %9zu | solve %7.1fs\n", it, table.size(), solveSecs);
                 std::fflush(stdout);
             }
             if (sampled) {
-                std::printf("           traversals %.3g\n", static_cast<double>(sampled->traversals()));
+                std::printf("           traversals %.3g, nodes/traversal %.1f\n",
+                            static_cast<double>(sampled->traversals()),
+                            static_cast<double>(sampled->nodesVisited()) / sampled->traversals());
                 std::fflush(stdout);
             }
         }
     }
 
-    if (args.round == 1) printRound1Chart(table);
+    if (args.round == 1) printRound1Chart(table, policy);
     if (!args.out.empty()) writeCsv(table, args.out, args.dumpAll);
     return 0;
 }
