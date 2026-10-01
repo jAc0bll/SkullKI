@@ -1,0 +1,11 @@
+﻿round | est. nodes per traversal | measured nodes/s (all threads) | est. time per traversal
+    1 |                     15.7 |                       7.17e+07 |             2.19e-07 s
+    2 |                       52 |                       7.38e+06 |             7.05e-06 s
+    3 |                      193 |                       4.46e+06 |             4.31e-05 s
+    4 |                      801 |                       3.48e+06 |              0.00023 s
+    5 |                 3.72e+03 |                              - |              0.00107 s (extrapolated)
+    6 |                 1.95e+04 |                              - |               0.0056 s (extrapolated)
+    7 |                 1.11e+05 |                              - |               0.0318 s (extrapolated)
+    8 |                 6.71e+05 |                              - |                0.193 s (extrapolated)
+    9 |                 4.32e+06 |                              - |                 1.24 s (extrapolated)
+   10 |                 3.09e+07 |                              - |                 8.88 s (extrapolated)

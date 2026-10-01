@@ -1,14 +1,19 @@
-// solve_round — exact equilibrium solver for a single Skull King round.
+// solve_round — equilibrium solver for a single Skull King round.
 //
-// Runs full-width Discounted CFR over every deal of the round and reports
-// exact NashConv (sum over players of best-response gain) as it converges.
-// Feasible for round 1 with 4 players.
+// Methods:
+//   dcfr   full-width Discounted CFR over every deal (exact; round 1 only)
+//   mccfr  external-sampling Monte Carlo CFR (sampled deals and opponent
+//          actions; one "iteration" = one batch of sampled deals)
+// Whenever the round is small enough to enumerate (round 1 with 4 players),
+// exact NashConv (sum over players of best-response gain) is reported.
 //
 //   sk_solve_round --round 1 --iters 200 --eval-every 20 --out round1.csv
+//   sk_solve_round --method mccfr --round 1 --iters 400 --deals-per-batch 65536
 
 #include "sk/solver/best_response.hpp"
 #include "sk/solver/cfr.hpp"
 #include "sk/solver/deals.hpp"
+#include "sk/solver/mccfr.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -18,6 +23,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <string>
 
 using namespace sk;
@@ -25,7 +31,13 @@ using namespace sk::solver;
 
 namespace {
 
+enum class Method { DCFR, MCCFR };
+
 struct Args {
+    Method  method    = Method::DCFR;
+    int     dealsPerBatch = 1 << 16;
+    DCFRParams dcfr{};
+    std::uint64_t seed = 1;
     int     round     = 1;
     int     iters     = 200;
     int     evalEvery = 20;
@@ -54,6 +66,15 @@ Args parse(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--threads"))    a.threads = std::atoi(next());
         else if (!std::strcmp(argv[i], "--out"))        a.out = next();
         else if (!std::strcmp(argv[i], "--dump-all"))   a.dumpAll = true;
+        else if (!std::strcmp(argv[i], "--deals-per-batch")) a.dealsPerBatch = std::atoi(next());
+        else if (!std::strcmp(argv[i], "--seed"))       a.seed = std::strtoull(next(), nullptr, 10);
+        else if (!std::strcmp(argv[i], "--linear"))     a.dcfr = DCFRParams{1.0, 1.0, 1.0};
+        else if (!std::strcmp(argv[i], "--method")) {
+            const std::string m = next();
+            if (m == "dcfr")       a.method = Method::DCFR;
+            else if (m == "mccfr") a.method = Method::MCCFR;
+            else { usage(); std::exit(2); }
+        }
         else if (!std::strcmp(argv[i], "--utility")) {
             const std::string u = next();
             if (u == "relative")      a.utility = Utility::Relative;
@@ -69,8 +90,8 @@ double seconds(std::chrono::steady_clock::time_point t0) {
 }
 
 void printReport(int iter, std::size_t infosets, double secs, const ExploitabilityReport& r) {
-    std::printf("iter %5d | infosets %9zu | %7.1fs | NashConv %9.4f | gain", iter, infosets, secs,
-                r.nashConv);
+    std::printf("iter %5d | infosets %9zu | solve %7.1fs | NashConv %9.4f | gain", iter, infosets,
+                secs, r.nashConv);
     for (int p = 0; p < N_PLAYERS; ++p) std::printf(" %7.4f", r.gain[p]);
     std::printf(" | value");
     for (int p = 0; p < N_PLAYERS; ++p) std::printf(" %+8.3f", r.value[p]);
@@ -196,34 +217,78 @@ void writeCsv(const InfosetTable& table, const std::string& path, bool dumpAll) 
 
 } // namespace
 
+// Exact evaluation enumerates every deal: only possible for tiny rounds.
+bool canEvaluateExactly(int round) {
+    return N_PLAYERS * round <= 4;
+}
+
 int main(int argc, char** argv) {
     const Args args = parse(argc, argv);
+    const bool exact = canEvaluateExactly(args.round);
+    if (args.method == Method::DCFR && !exact) {
+        std::fprintf(stderr, "dcfr enumerates every deal; round %d is too large. Use --method mccfr.\n",
+                     args.round);
+        return 2;
+    }
 
-    std::printf("Skull King round %d, %d players, utility=%s, %zu kind-deals\n", args.round,
-                N_PLAYERS, args.utility == Utility::Relative ? "relative" : "absolute",
-                countDeals(args.round));
+    std::printf("Skull King round %d, %d players, utility=%s, method=%s",
+                args.round, N_PLAYERS, args.utility == Utility::Relative ? "relative" : "absolute",
+                args.method == Method::DCFR ? "dcfr" : "mccfr");
+    if (args.method == Method::MCCFR) std::printf(" (%d deals/batch)", args.dealsPerBatch);
+    if (exact) std::printf(", %zu kind-deals", countDeals(args.round));
+    std::printf("\n");
 
-    CFRConfig cc;
-    cc.round = args.round;
-    cc.utility = args.utility;
-    cc.threads = args.threads;
-    FullWidthCFR cfr(cc);
+    std::unique_ptr<FullWidthCFR> fullWidth;
+    std::unique_ptr<ExternalSamplingMCCFR> sampled;
+    if (args.method == Method::DCFR) {
+        CFRConfig cc;
+        cc.round = args.round;
+        cc.utility = args.utility;
+        cc.threads = args.threads;
+        cc.alpha = args.dcfr.alpha;
+        cc.beta = args.dcfr.beta;
+        cc.gamma = args.dcfr.gamma;
+        fullWidth = std::make_unique<FullWidthCFR>(cc);
+    } else {
+        MCCFRConfig mc;
+        mc.round = args.round;
+        mc.utility = args.utility;
+        mc.threads = args.threads;
+        mc.seed = args.seed;
+        mc.dealsPerBatch = args.dealsPerBatch;
+        mc.dcfr = args.dcfr;
+        sampled = std::make_unique<ExternalSamplingMCCFR>(mc);
+    }
+    const InfosetTable& table = fullWidth ? fullWidth->table() : sampled->table();
 
     EvalConfig ec;
     ec.round = args.round;
     ec.utility = args.utility;
     ec.threads = args.threads;
 
-    const auto t0 = std::chrono::steady_clock::now();
+    double solveSecs = 0.0;
     for (int it = 1; it <= args.iters; ++it) {
-        cfr.iterate();
+        const auto t0 = std::chrono::steady_clock::now();
+        if (fullWidth) fullWidth->iterate();
+        else           sampled->runBatch();
+        solveSecs += seconds(t0);
+
         if (it == 1 || it % args.evalEvery == 0 || it == args.iters) {
-            const auto rep = exploitability(AveragePolicy(cfr.table()), ec);
-            printReport(it, cfr.table().size(), seconds(t0), rep);
+            if (exact) {
+                const auto rep = exploitability(AveragePolicy(table), ec);
+                printReport(it, table.size(), solveSecs, rep);
+            } else {
+                std::printf("iter %5d | infosets %9zu | solve %7.1fs\n", it, table.size(), solveSecs);
+                std::fflush(stdout);
+            }
+            if (sampled) {
+                std::printf("           traversals %.3g\n", static_cast<double>(sampled->traversals()));
+                std::fflush(stdout);
+            }
         }
     }
 
-    if (args.round == 1) printRound1Chart(cfr.table());
-    if (!args.out.empty()) writeCsv(cfr.table(), args.out, args.dumpAll);
+    if (args.round == 1) printRound1Chart(table);
+    if (!args.out.empty()) writeCsv(table, args.out, args.dumpAll);
     return 0;
 }

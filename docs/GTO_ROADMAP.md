@@ -51,7 +51,8 @@ Engine decisions that affect the solution:
 |---|---|---|
 | 0 | Engine fixes: simultaneous bidding, voids, mermaid bonus, allocation-free legal moves | ✅ |
 | 1 | Exact solver for one round: full-width Discounted CFR + exact best response / NashConv (`solver/`, `sk_solve_round`) | ✅ round 1 |
-| 2 | Rounds 2–10 (4p): sampled CFR + function approximation, validated against phase 1 | next |
+| 2a | Sampled CFR (external-sampling MCCFR) measured against the exact round 1 | ✅ |
+| 2b | Rounds 2–10 (4p): sampled traverser actions + neural networks (ESCHER / Deep CFR family), validated against round 1 | next |
 | 3 | Decision-time subgame solving for a concrete spot | planned |
 | 4 | Win-probability value function, re-solve with win utility | planned |
 | 2p | 2-player engine mode, exact solutions for small rounds, true GTO | planned |
@@ -75,8 +76,11 @@ Full-width tabular CFR is out of reach, as is an exact best response for
 4 players. Plan:
 
 1. **Sampled CFR** (external-sampling MCCFR) on the same `RoundState` /
-   infoset keys. Run on round 1, where the exact NashConv is available, to
-   measure the error introduced by sampling.
+   infoset keys, measured on round 1 (`results/mccfr_vs_exact/`): seats 1–3
+   are near-exact after 19 s, but seat 4's ~3.3M rare Tigress infosets are
+   mostly never sampled (NashConv plateaus ~0.15). An ES traversal also
+   grows ~6× per round (31M nodes in round 10). Hence: sample the
+   traverser's actions too, and generalise with networks.
 2. **Function approximation** for rounds ≥ 3 (Deep CFR / ESCHER-style regret
    networks, or regularised self-play such as MMD / R-NaD). Pick the method
    empirically: whichever gives the lowest NashConv on rounds 1–2 (2p: 1–3),

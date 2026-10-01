@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sk/solver/dcfr_update.hpp"
 #include "sk/solver/round.hpp"
 #include "sk/solver/table.hpp"
 

@@ -2,7 +2,9 @@ add_library(sk_solver STATIC
     src/round.cpp
     src/deals.cpp
     src/table.cpp
+    src/dcfr_update.cpp
     src/cfr.cpp
+    src/mccfr.cpp
     src/best_response.cpp
 )
 

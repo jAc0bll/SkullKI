@@ -1,9 +1,6 @@
 #include "sk/solver/cfr.hpp"
 #include "sk/solver/parallel.hpp"
 
-#include <cmath>
-#include <unordered_map>
-
 namespace sk::solver {
 
 namespace {
@@ -11,17 +8,10 @@ namespace {
 constexpr int CAP = ActionList::CAPACITY;
 using Values = std::array<double, N_PLAYERS>;
 
-// Per-thread accumulator of this iteration's regret / strategy deltas, so
-// hot infosets (e.g. bidding) are not contended between threads.
-struct Delta {
-    std::array<double, CAP> dR{};
-    std::array<double, CAP> dS{};
-};
-
 struct Worker {
     const CFRConfig* cfg   = nullptr;
     InfosetTable*    table = nullptr;
-    std::unordered_map<InfoNode*, Delta> deltas;
+    DeltaMap         deltas;
     Values value{};   // sum over deals of chance * value under current profile
 
     // Bidding infosets depend only on (seat, hand): resolve once per deal.
@@ -104,15 +94,6 @@ struct Worker {
     }
 };
 
-void regretMatch(const std::vector<double>& regret, std::vector<double>& out) {
-    double pos = 0.0;
-    for (double r : regret) pos += (r > 0.0 ? r : 0.0);
-    const std::size_t n = regret.size();
-    for (std::size_t a = 0; a < n; ++a) {
-        out[a] = (pos > 0.0) ? (regret[a] > 0.0 ? regret[a] / pos : 0.0) : 1.0 / n;
-    }
-}
-
 } // namespace
 
 FullWidthCFR::FullWidthCFR(CFRConfig cfg) : cfg_(cfg) {}
@@ -129,30 +110,10 @@ void FullWidthCFR::iterate() {
     // iteration the table is complete and lookups can go lock-free.
     table_.freeze();
 
-    const double t = static_cast<double>(t_);
-    const double posDisc = std::pow(t, cfg_.alpha) / (std::pow(t, cfg_.alpha) + 1.0);
-    const double negDisc = std::pow(t, cfg_.beta)  / (std::pow(t, cfg_.beta)  + 1.0);
-    const double avgDisc = std::pow(t / (t + 1.0), cfg_.gamma);
-
-    // S <- S * avgDisc + dS ;  R <- disc(R + dR)
-    table_.forEach([&](const InfoKey&, InfoNode& n) {
-        for (int a = 0; a < n.nA; ++a) n.stratSum[a] *= avgDisc;
-    });
-    for (auto& w : workers) {
-        for (auto& [node, d] : w.deltas) {
-            for (int a = 0; a < node->nA; ++a) {
-                node->regret[a]   += d.dR[a];
-                node->stratSum[a] += d.dS[a];
-            }
-        }
-    }
-    table_.forEach([&](const InfoKey&, InfoNode& n) {
-        for (int a = 0; a < n.nA; ++a) {
-            double& r = n.regret[a];
-            r *= (r > 0.0) ? posDisc : negDisc;
-        }
-        regretMatch(n.regret, n.current);
-    });
+    std::vector<const DeltaMap*> deltas;
+    for (const auto& w : workers) deltas.push_back(&w.deltas);
+    DCFRParams params{cfg_.alpha, cfg_.beta, cfg_.gamma};
+    applyDCFRUpdate(table_, deltas, t_, params);
 
     lastValue_.fill(0.0);
     for (const auto& w : workers)

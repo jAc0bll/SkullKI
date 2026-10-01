@@ -4,6 +4,7 @@
 #include "sk/solver/best_response.hpp"
 #include "sk/solver/cfr.hpp"
 #include "sk/solver/deals.hpp"
+#include "sk/solver/mccfr.hpp"
 #include "sk/solver/round.hpp"
 
 #include <random>
@@ -218,4 +219,34 @@ TEST_CASE("CFR on round 1 drives NashConv towards zero", "[solver][cfr][.slow]")
     const double last = exploitability(AveragePolicy(cfr.table()), e).nashConv;
     REQUIRE(last < first);
     REQUIRE(last < 0.5);
+}
+
+TEST_CASE("MCCFR runs on larger rounds and keeps strategies normalised", "[solver][mccfr]") {
+    MCCFRConfig c;
+    c.round = 4;
+    c.dealsPerBatch = 2000;
+    ExternalSamplingMCCFR m(c);
+    for (int i = 0; i < 3; ++i) m.runBatch();
+    REQUIRE(m.traversals() >= 3u * 2000u * N_PLAYERS);
+    REQUIRE(m.table().size() > 1000);
+    m.table().forEach([&](const InfoKey&, const InfoNode& n) {
+        double sum = 0.0;
+        for (double x : n.current) {
+            REQUIRE(x >= 0.0);
+            sum += x;
+        }
+        REQUIRE(sum == Catch::Approx(1.0));
+    });
+}
+
+TEST_CASE("MCCFR on round 1 is far less exploitable than uniform", "[solver][mccfr]") {
+    MCCFRConfig c;
+    c.round = 1;
+    c.dealsPerBatch = 50000;
+    ExternalSamplingMCCFR m(c);
+    for (int i = 0; i < 20; ++i) m.runBatch();
+    EvalConfig e;
+    e.round = 1;
+    const double nc = exploitability(AveragePolicy(m.table()), e).nashConv;
+    REQUIRE(nc < 1.0);   // uniform: ~31
 }
