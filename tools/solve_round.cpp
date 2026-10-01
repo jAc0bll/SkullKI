@@ -160,6 +160,19 @@ void printRound1Chart(const InfosetTable& table) {
     std::printf("\nTigress declared as Pirate (reach-weighted):\n");
     for (const auto& [k, e] : tig) {
         if (e.first <= 0) continue;
+        // If the Tigress holder never makes this bid in equilibrium, these
+        // infosets are off the equilibrium path and their strategy is arbitrary.
+        CardSet hand;
+        hand.add(TIGRESS);
+        InfoKey key;
+        biddingKey(1, k.first, hand, key);
+        double bid[2] = {0.5, 0.5};
+        if (const InfoNode* n = table.find(key)) n->averageStrategy(bid);
+        if (bid[k.second] < 1e-6) {
+            std::printf("  seat %d, own bid %d: off-path (never bid with Tigress)\n", k.first + 1,
+                        k.second);
+            continue;
+        }
         std::printf("  seat %d, own bid %d: %.3f\n", k.first + 1, k.second, e.second / e.first);
     }
 }

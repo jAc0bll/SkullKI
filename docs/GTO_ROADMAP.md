@@ -62,7 +62,10 @@ Engine decisions that affect the solution:
   Tigress declarations; 244 bidding infosets).
 - One DCFR iteration ≈ 3.5 s, one exact NashConv evaluation ≈ 25 s on a
   12-core i7-12700K.
-- Results: `results/round1_4p/` (log + bidding strategy CSV).
+- **Solved:** NashConv 31.3 → < 0.0001 points/round after 300 iterations.
+  The equilibrium bid is pure and the same for every seat: bid 1 with
+  Black 5–14, Mermaid, Pirate, Tigress, Skull King; otherwise 0. Leading
+  costs ~1.3 relative points. Details: `results/round1_4p/README.md`.
 
 ### Why round 2+ needs a different method
 

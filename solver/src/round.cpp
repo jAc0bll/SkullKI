@@ -109,7 +109,7 @@ std::string describeAction(const Action& a) {
 
 std::string describeKey(const InfoKey& key) {
     auto at = [&](std::size_t i) { return static_cast<std::uint8_t>(key[i]); };
-    std::string s = "R" + std::to_string(at(0)) + " seat" + std::to_string(at(1));
+    std::string s = "R" + std::to_string(at(0)) + " seat" + std::to_string(at(1) + 1);  // 1 = leads
     const bool playing = at(2) != 0;
     const int n = at(3);
     s += " hand[";
