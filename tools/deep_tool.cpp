@@ -26,7 +26,8 @@ using namespace sk::solver;
 namespace {
 
 struct Args {
-    std::string cmd, policy, value, out, mode = "rm";
+    std::string cmd, policy, value, out, mode = "rm", oppPolicy, oppMode = "softmax";
+    int learner = -1;
     int round = 1, count = 10000, threads = 0;
     std::uint64_t seed = 1;
     bool exactValues = false;
@@ -54,18 +55,21 @@ Args parse(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--threads")) a.threads = std::atoi(next());
         else if (!std::strcmp(argv[i], "--seed"))    a.seed = std::strtoull(next(), nullptr, 10);
         else if (!std::strcmp(argv[i], "--exact-values")) a.exactValues = true;
+        else if (!std::strcmp(argv[i], "--opp-policy")) a.oppPolicy = next();
+        else if (!std::strcmp(argv[i], "--opp-mode"))   a.oppMode = next();
+        else if (!std::strcmp(argv[i], "--learner"))    a.learner = std::atoi(next());
         else usage();
     }
     return a;
 }
 
-std::unique_ptr<PolicyView> makePolicy(const Args& a) {
-    if (a.policy.empty()) return std::make_unique<UniformPolicy>();
-    auto net = std::make_shared<const MLP>(MLP::load(a.policy));
+std::unique_ptr<PolicyView> loadPolicy(const std::string& path, const std::string& mode) {
+    if (path.empty() || path == "uniform") return std::make_unique<UniformPolicy>();
+    auto net = std::make_shared<const MLP>(MLP::load(path));
     if (net->inputDim() != INFO_DIM || net->outputDim() != ACT_DIM)
-        throw std::runtime_error("policy net has wrong shape");
-    return std::make_unique<NetPolicy>(net, a.mode == "softmax" ? NetMode::Softmax
-                                                                : NetMode::RegretMatching);
+        throw std::runtime_error("policy net has wrong shape: " + path);
+    return std::make_unique<NetPolicy>(net, mode == "softmax" ? NetMode::Softmax
+                                                              : NetMode::RegretMatching);
 }
 
 double secondsSince(std::chrono::steady_clock::time_point t0) {
@@ -84,7 +88,18 @@ int main(int argc, char** argv) {
     g.threads = a.threads;
 
     try {
-        const auto policy = makePolicy(a);
+        // --learner i --opp-policy F: player i follows --policy, the others
+        // the fixed --opp-policy (best-response training / matches).
+        const auto own = loadPolicy(a.policy, a.mode);
+        std::unique_ptr<PolicyView> opp;
+        std::unique_ptr<PolicyView> mixed;
+        const PolicyView* policy = own.get();
+        if (a.learner >= 0) {
+            opp = loadPolicy(a.oppPolicy, a.oppMode);
+            mixed = std::make_unique<MixedPolicy>(*own, *opp, a.learner);
+            policy = mixed.get();
+            g.onlyPlayer = a.learner;
+        }
         if (a.cmd == "gen-values") {
             if (a.out.empty()) usage();
             const ValueSamples v = generateValueSamples(*policy, g);
@@ -111,6 +126,12 @@ int main(int argc, char** argv) {
             writeNpy(a.out + "_ptarget.npy", p.target, {p.size(), A});
             std::printf("regret samples %zu, policy samples %zu (%.1fs)\n", r.size(), p.size(),
                         secondsSince(t0));
+        } else if (a.cmd == "match") {
+            // Mean utility of the learner seat with and without its policy.
+            if (a.learner < 0) usage();
+            const MatchResult m = playMatch(*policy, a.learner, g);
+            std::printf("seat %d utility %+.4f +- %.4f over %d deals\n", a.learner + 1, m.mean,
+                        m.stderr_, g.count);
         } else if (a.cmd == "chart") {
             // Round-1 bidding of the policy: P(bid 1) per seat and card kind,
             // one line per kind: "kind p1 p2 p3 p4".

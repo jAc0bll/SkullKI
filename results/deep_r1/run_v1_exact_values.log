@@ -1,0 +1,41 @@
+﻿.\.venv\Scripts\python.exe : C:\Users\jaxob\Documents\SkullKI\train\deep_cfr.py:132: UserWarning: Converting a tensor 
+with requires_grad=True to a scalar may lead to unexpected behavior.
+In Zeile:1 Zeichen:424
++ ... lyContinue; .\.venv\Scripts\python.exe train\deep_cfr.py --round 1 -- ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\Users\jaxob\...ected behavior.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Consider using tensor.detach() first. (Triggered internally at 
+C:\actions-runner\_work\pytorch\pytorch\torch\csrc\autograd\generated\python_variable_methods.cpp:821.)
+  last = float(loss)
+{"iter": 1, "regret_samples": 81151, "policy_samples": 243504, "regret_loss": 0.0277, "iter_seconds": 23.0, "total_seconds": 23.0}
+{"iter": 2, "regret_samples": 81134, "policy_samples": 243467, "regret_loss": 0.0583, "iter_seconds": 27.8, "total_seconds": 50.8}
+{"iter": 3, "regret_samples": 81137, "policy_samples": 243354, "regret_loss": 0.0578, "iter_seconds": 28.5, "total_seconds": 79.3}
+{"iter": 4, "regret_samples": 81172, "policy_samples": 243322, "regret_loss": 0.0635, "iter_seconds": 26.8, "total_seconds": 106.1}
+{"iter": 5, "regret_samples": 81143, "policy_samples": 243386, "regret_loss": 0.0653, "policy_loss": 0.1497, "eval_avg": "materialized 3351556 infosets (28.5s)\nNashConv 1.9228 | gain 0.4430 0.4847 0.4931 0.5020 | value -1.264 +0.495 +0.498 +0.271 (62.9s)", "eval_current": "materialized 3351556 infosets (28.3s)\nNashConv 0.0114 | gain -0.0000 0.0085 0.0004 0.0025 | value -1.308 +0.493 +0.515 +0.300 (35.0s)", "iter_seconds": 170.2, "total_seconds": 276.3}
+{"iter": 6, "regret_samples": 81164, "policy_samples": 243354, "regret_loss": 0.0631, "iter_seconds": 27.1, "total_seconds": 303.4}
+{"iter": 7, "regret_samples": 81112, "policy_samples": 243413, "regret_loss": 0.0597, "iter_seconds": 26.9, "total_seconds": 330.2}
+{"iter": 8, "regret_samples": 81159, "policy_samples": 243415, "regret_loss": 0.0555, "iter_seconds": 27.0, "total_seconds": 357.3}
+{"iter": 9, "regret_samples": 81136, "policy_samples": 243534, "regret_loss": 0.0577, "iter_seconds": 26.9, "total_seconds": 384.2}
+{"iter": 10, "regret_samples": 81144, "policy_samples": 243365, "regret_loss": 0.0632, "policy_loss": 0.0718, "eval_avg": "materialized 3351556 infosets (28.4s)\nNashConv 0.6274 | gain 0.1495 0.1600 0.1596 0.1583 | value -1.303 +0.497 +0.509 +0.297 (62.8s)", "eval_current": "materialized 3351556 infosets (28.4s)\nNashConv 0.0700 | gain 0.0408 0.0089 0.0091 0.0112 | value -1.345 +0.513 +0.525 +0.307 (35.0s)", "iter_seconds": 168.3, "total_seconds": 552.4}
+{"iter": 11, "regret_samples": 81147, "policy_samples": 243476, "regret_loss": 0.0593, "iter_seconds": 26.5, "total_seconds": 579.0}
+{"iter": 12, "regret_samples": 81171, "policy_samples": 243460, "regret_loss": 0.0652, "iter_seconds": 26.6, "total_seconds": 605.6}
+{"iter": 13, "regret_samples": 81151, "policy_samples": 243455, "regret_loss": 0.0626, "iter_seconds": 23.8, "total_seconds": 629.4}
+{"iter": 14, "regret_samples": 81113, "policy_samples": 243414, "regret_loss": 0.0632, "iter_seconds": 23.0, "total_seconds": 652.3}
+{"iter": 15, "regret_samples": 81121, "policy_samples": 243513, "regret_loss": 0.0584, "policy_loss": 0.0473, "eval_avg": "materialized 3351556 infosets (26.3s)\nNashConv 0.2547 | gain 0.0581 0.0643 0.0671 0.0653 | value -1.304 +0.499 +0.508 +0.297 (58.2s)", "eval_current": "materialized 3351556 infosets (26.3s)\nNashConv 0.0251 | gain 0.0071 0.0069 0.0054 0.0057 | value -1.312 +0.499 +0.513 +0.300 (32.7s)", "iter_seconds": 149.6, "total_seconds": 801.9}
+{"iter": 16, "regret_samples": 81126, "policy_samples": 243363, "regret_loss": 0.0604, "iter_seconds": 22.8, "total_seconds": 824.7}
+{"iter": 17, "regret_samples": 81070, "policy_samples": 243494, "regret_loss": 0.063, "iter_seconds": 22.8, "total_seconds": 847.6}
+{"iter": 18, "regret_samples": 81123, "policy_samples": 243393, "regret_loss": 0.0602, "iter_seconds": 22.7, "total_seconds": 870.3}
+{"iter": 19, "regret_samples": 81139, "policy_samples": 243504, "regret_loss": 0.0598, "iter_seconds": 23.1, "total_seconds": 893.4}
+{"iter": 20, "regret_samples": 81084, "policy_samples": 243374, "regret_loss": 0.0595, "policy_loss": 0.0422, "eval_avg": "materialized 3351556 infosets (26.3s)\nNashConv 0.2164 | gain 0.0476 0.0509 0.0590 0.0589 | value -1.303 +0.505 +0.507 +0.292 (58.0s)", "eval_current": "materialized 3351556 infosets (26.3s)\nNashConv 0.0336 | gain 0.0082 0.0084 0.0084 0.0086 | value -1.311 +0.501 +0.512 +0.298 (32.5s)", "iter_seconds": 149.8, "total_seconds": 1043.2}
+{"iter": 21, "regret_samples": 81146, "policy_samples": 243470, "regret_loss": 0.0645, "iter_seconds": 22.6, "total_seconds": 1065.7}
+{"iter": 22, "regret_samples": 81157, "policy_samples": 243368, "regret_loss": 0.0579, "iter_seconds": 22.9, "total_seconds": 1088.6}
+{"iter": 23, "regret_samples": 81208, "policy_samples": 243488, "regret_loss": 0.0643, "iter_seconds": 22.8, "total_seconds": 1111.4}
+{"iter": 24, "regret_samples": 81116, "policy_samples": 243560, "regret_loss": 0.0666, "iter_seconds": 22.7, "total_seconds": 1134.2}
+{"iter": 25, "regret_samples": 81154, "policy_samples": 243494, "regret_loss": 0.0621, "policy_loss": 0.0275, "eval_avg": "materialized 3351556 infosets (26.3s)\nNashConv 0.1414 | gain 0.0348 0.0337 0.0359 0.0370 | value -1.311 +0.503 +0.512 +0.296 (58.0s)", "eval_current": "materialized 3351556 infosets (26.6s)\nNashConv 0.0269 | gain 0.0082 0.0089 0.0091 0.0007 | value -1.313 +0.497 +0.510 +0.307 (32.7s)", "iter_seconds": 149.5, "total_seconds": 1283.7}
+{"iter": 26, "regret_samples": 81153, "policy_samples": 243415, "regret_loss": 0.0596, "iter_seconds": 22.6, "total_seconds": 1306.3}
+{"iter": 27, "regret_samples": 81101, "policy_samples": 243465, "regret_loss": 0.062, "iter_seconds": 22.6, "total_seconds": 1328.9}
+{"iter": 28, "regret_samples": 81132, "policy_samples": 243433, "regret_loss": 0.0587, "iter_seconds": 22.6, "total_seconds": 1351.5}
+{"iter": 29, "regret_samples": 81103, "policy_samples": 243391, "regret_loss": 0.0614, "iter_seconds": 22.7, "total_seconds": 1374.2}
+{"iter": 30, "regret_samples": 81165, "policy_samples": 243442, "regret_loss": 0.0656, "policy_loss": 0.0369, "eval_avg": "materialized 3351556 infosets (26.3s)\nNashConv 0.1285 | gain 0.0352 0.0300 0.0315 0.0318 | value -1.315 +0.503 +0.514 +0.299 (58.1s)", "eval_current": "materialized 3351556 infosets (26.5s)\nNashConv 0.0360 | gain 0.0089 0.0089 0.0091 0.0091 | value -1.311 +0.500 +0.512 +0.299 (32.6s)", "iter_seconds": 150.0, "total_seconds": 1524.2}

@@ -183,7 +183,7 @@ ValueSamples generateValueSamples(const PolicyView& sigma, const GenConfig& cfg)
             RoundState rs = makeRoundState(cfg.round, sampleDeal(cfg.round, rng));
             // Traverser i explores uniformly for its first K+1 decisions, then
             // everybody follows sigma; states from then on get on-policy targets.
-            const int i = uniformIndex(N_PLAYERS, rng);
+            const int i = cfg.onlyPlayer >= 0 ? cfg.onlyPlayer : uniformIndex(N_PLAYERS, rng);
             const int K = uniformIndex(cfg.round + 2, rng);
             int decisions = 0;
             bool recording = false;
@@ -245,6 +245,7 @@ void generateRegretSamples(const PolicyView& sigma, const MLP* value, const GenC
 
         for (int tr = 0; tr < trajs; ++tr) {
             for (int i = 0; i < N_PLAYERS; ++i) {
+                if (cfg.onlyPlayer >= 0 && i != cfg.onlyPlayer) continue;
                 RoundState rs = makeRoundState(cfg.round, sampleDeal(cfg.round, rng));
                 while (!rs.terminal()) {
                     ActionList al;
@@ -303,6 +304,42 @@ void generateRegretSamples(const PolicyView& sigma, const MLP* value, const GenC
         policy.mask.insert(policy.mask.end(), p.mask.begin(), p.mask.end());
         policy.target.insert(policy.target.end(), p.target.begin(), p.target.end());
     }
+}
+
+// ---------------------------------------------------------------------------
+// Head-to-head simulation
+// ---------------------------------------------------------------------------
+MatchResult playMatch(const PolicyView& sigma, int player, const GenConfig& cfg) {
+    const int nThreads = resolveThreads(cfg.threads);
+    std::vector<double> sum(nThreads), sumSq(nThreads);
+    runThreads(nThreads, [&](int tid) {
+        std::mt19937_64 rng(cfg.seed * 0xA24BAED4963EE407ull + 31337ull * tid + 5);
+        const int games = cfg.count / nThreads + (tid < cfg.count % nThreads ? 1 : 0);
+        std::array<double, ActionList::CAPACITY> pr;
+        for (int g = 0; g < games; ++g) {
+            RoundState rs = makeRoundState(cfg.round, sampleDeal(cfg.round, rng));
+            while (!rs.terminal()) {
+                ActionList al;
+                legalKindActions(rs.s, al);
+                int a = 0;
+                if (al.n > 1) {
+                    sigma.probs(rs, rs.s.currentPlayer, al, pr.data());
+                    a = sampleIndex(pr.data(), al.n, rng);
+                }
+                applyRound(rs, al[a]);
+            }
+            const double u = roundUtilities(rs, cfg.utility)[player];
+            sum[tid] += u;
+            sumSq[tid] += u * u;
+        }
+    });
+    double s = 0.0, s2 = 0.0;
+    for (int t = 0; t < nThreads; ++t) { s += sum[t]; s2 += sumSq[t]; }
+    const double n = cfg.count;
+    MatchResult r;
+    r.mean = s / n;
+    r.stderr_ = std::sqrt(std::max(0.0, s2 / n - r.mean * r.mean) / n);
+    return r;
 }
 
 // ---------------------------------------------------------------------------

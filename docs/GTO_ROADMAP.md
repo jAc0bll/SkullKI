@@ -53,7 +53,8 @@ Engine decisions that affect the solution:
 | 1 | Exact solver for one round: full-width Discounted CFR + exact best response / NashConv (`solver/`, `sk_solve_round`) | ✅ round 1 |
 | 2a | Sampled CFR (external-sampling MCCFR) measured against the exact round 1 | ✅ |
 | 2b | Abstraction framework: suit isomorphism (lossless), feature abstraction (lossy), pruning — round 1 solved in 6 s at NashConv 0.0001 | ✅ |
-| 2c | Rounds 4–10 (4p): tables saturate (≥ 90 % unique keys) → neural networks on the same features (Deep CFR family with sampled traverser actions), validated against round 1 | next |
+| 2c | Neural CFR (ESCHER-style): round 1 average net NashConv 0.036 (residual = Black 4/5 boundary); value net costs nothing measurable; trained exploiter calibrated (99.9 % of exact); data generation linear in round length (`results/deep_r1/`) | ✅ |
+| 3 | Rounds 2–10 on rented hardware (1 GPU + many cores), exploitability via trained exploiters | next |
 | 3 | Decision-time subgame solving for a concrete spot | planned |
 | 4 | Win-probability value function, re-solve with win utility | planned |
 | 2p | 2-player engine mode, exact solutions for small rounds, true GTO | planned |

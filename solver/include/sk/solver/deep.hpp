@@ -68,7 +68,30 @@ struct GenConfig {
     int           count   = 10000;   // games (values) or trajectories per traverser (regrets)
     std::uint64_t seed    = 1;
     int           threads = 0;
+    // >= 0: only this player is traversed / explored (best-response
+    // training against fixed opponents); -1: all players.
+    int           onlyPlayer = -1;
 };
+
+// Player `learner` follows `mine`, everybody else follows `others`.
+class MixedPolicy final : public PolicyView {
+public:
+    MixedPolicy(const PolicyView& mine, const PolicyView& others, int learner)
+        : mine_(mine), others_(others), learner_(learner) {}
+    void probs(const RoundState& rs, int player, const ActionList& legal,
+               double* out) const override {
+        (player == learner_ ? mine_ : others_).probs(rs, player, legal, out);
+    }
+private:
+    const PolicyView& mine_;
+    const PolicyView& others_;
+    int learner_;
+};
+
+// Mean utility of `player` (and its standard error) when everybody follows
+// `sigma`, estimated from cfg.count sampled deals.
+struct MatchResult { double mean = 0.0, stderr_ = 0.0; };
+MatchResult playMatch(const PolicyView& sigma, int player, const GenConfig& cfg);
 
 struct ValueSamples {
     std::vector<std::uint8_t> x;   // n x HIST_DIM

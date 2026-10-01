@@ -13,6 +13,12 @@ script trains them (PyTorch) and drives the loop:
 
 Usage (round 1 gate, from the repo root):
   .venv/Scripts/python train/deep_cfr.py --round 1 --iters 30 --workdir runs/deep_r1
+
+Best-response mode (exploitability estimate where exact evaluation is
+impossible): --br-vs avg.bin --br-player i trains only seat i against the
+fixed average strategy of the others and finally reports how much seat i
+gains over playing the average strategy itself (a lower bound on that
+seat's exploitability).
 """
 from __future__ import annotations
 
@@ -181,6 +187,10 @@ def main() -> None:
     ap.add_argument("--exact-values", action="store_true",
                     help="diagnostic: exact action values instead of a value net (tiny rounds)")
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--br-vs", type=Path, default=None,
+                    help="train a best response for --br-player against this average-strategy net")
+    ap.add_argument("--br-player", type=int, default=0)
+    ap.add_argument("--match-deals", type=int, default=2_000_000)
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -199,6 +209,9 @@ def main() -> None:
     for t in range(1, args.iters + 1):
         it0 = time.time()
         pol = ["--policy", str(policy_path)] if policy_path else []
+        if args.br_vs:
+            pol += ["--learner", str(args.br_player), "--opp-policy", str(args.br_vs),
+                    "--opp-mode", "softmax"]
         common = ["--round", str(args.round), "--seed", str(args.seed * 1000 + t)] + pol
         rec = {"iter": t}
 
@@ -231,8 +244,16 @@ def main() -> None:
         policy_path = wd / "regret.bin"
         export(rnet, policy_path, args.scale)
 
+        # Best-response mode: how much does the trained seat gain?
+        if args.br_vs and (t % args.eval_every == 0 or t == args.iters):
+            seat = ["--round", str(args.round), "--learner", str(args.br_player),
+                    "--opp-policy", str(args.br_vs), "--count", str(args.match_deals),
+                    "--seed", str(424242)]
+            rec["br_match"] = run(["match", "--policy", str(policy_path), "--mode", "rm"] + seat)
+            rec["base_match"] = run(["match", "--policy", str(args.br_vs), "--mode", "softmax"] + seat)
+
         # Average strategy + exact evaluation
-        if t % args.eval_every == 0 or t == args.iters:
+        if not args.br_vs and (t % args.eval_every == 0 or t == args.iters):
             pnet = mlp(INFO_DIM, args.hidden, args.layers, ACT_DIM)
             rec["policy_loss"] = train_masked(pnet, policy_buf, args.policy_steps, args.batch,
                                               args.lr, "policy", 1.0, gen,
