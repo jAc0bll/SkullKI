@@ -97,34 +97,32 @@ TrickResult resolveTrick(const Card* cards,
     return r;
 }
 
-std::vector<Action> legalActions(const GameState& s) {
-    std::vector<Action> out;
+void legalActionsInto(const GameState& s, ActionList& out) {
+    out.n = 0;
 
     if (s.phase == Phase::Bidding) {
-        out.reserve(s.roundNumber + 1);
         for (int b = 0; b <= s.roundNumber; ++b) {
-            out.push_back(Action::makeBid(b));
+            out.push(Action::makeBid(b));
         }
-        return out;
+        return;
     }
 
-    if (s.phase != Phase::Playing) return out;
+    if (s.phase != Phase::Playing) return;
 
     if (s.pendingTigress) {
-        out.push_back(Action::makeTigressMode(true));
-        out.push_back(Action::makeTigressMode(false));
-        return out;
+        out.push(Action::makeTigressMode(true));
+        out.push(Action::makeTigressMode(false));
+        return;
     }
 
     const CardSet& hand = s.hands[s.currentPlayer];
-    out.reserve(10);
 
     const bool firstPlay = (s.trickSize == 0);
     const bool freeChoice = firstPlay || s.freeTrick || s.leadSuit == Suit::None;
 
     if (freeChoice) {
-        hand.forEach([&](Card c) { out.push_back(Action::makePlay(c)); });
-        return out;
+        hand.forEach([&](Card c) { out.push(Action::makePlay(c)); });
+        return;
     }
 
     // Must follow leadSuit if hand contains any card of that suit.
@@ -136,14 +134,19 @@ std::vector<Action> legalActions(const GameState& s) {
     if (hasLeadSuit) {
         hand.forEach([&](Card c) {
             if (isSpecial(c) || suitOf(c) == s.leadSuit) {
-                out.push_back(Action::makePlay(c));
+                out.push(Action::makePlay(c));
             }
         });
     } else {
         // No card of lead suit — anything goes.
-        hand.forEach([&](Card c) { out.push_back(Action::makePlay(c)); });
+        hand.forEach([&](Card c) { out.push(Action::makePlay(c)); });
     }
-    return out;
+}
+
+std::vector<Action> legalActions(const GameState& s) {
+    ActionList al;
+    legalActionsInto(s, al);
+    return std::vector<Action>(al.a, al.a + al.n);
 }
 
 } // namespace sk
