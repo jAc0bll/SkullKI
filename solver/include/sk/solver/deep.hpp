@@ -71,6 +71,9 @@ struct GenConfig {
     // >= 0: only this player is traversed / explored (best-response
     // training against fixed opponents); -1: all players.
     int           onlyPlayer = -1;
+    // Fraction of average-strategy samples kept (they outnumber regret
+    // samples ~3:1; thinning keeps files small when generating lots of data).
+    double        policyKeep = 1.0;
 };
 
 // Player `learner` follows `mine`, everybody else follows `others`.

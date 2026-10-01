@@ -31,6 +31,7 @@ struct Args {
     int round = 1, count = 10000, threads = 0;
     std::uint64_t seed = 1;
     bool exactValues = false;
+    double policyKeep = 1.0;
 };
 
 [[noreturn]] void usage() {
@@ -55,6 +56,7 @@ Args parse(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--threads")) a.threads = std::atoi(next());
         else if (!std::strcmp(argv[i], "--seed"))    a.seed = std::strtoull(next(), nullptr, 10);
         else if (!std::strcmp(argv[i], "--exact-values")) a.exactValues = true;
+        else if (!std::strcmp(argv[i], "--policy-keep")) a.policyKeep = std::atof(next());
         else if (!std::strcmp(argv[i], "--opp-policy")) a.oppPolicy = next();
         else if (!std::strcmp(argv[i], "--opp-mode"))   a.oppMode = next();
         else if (!std::strcmp(argv[i], "--learner"))    a.learner = std::atoi(next());
@@ -86,6 +88,7 @@ int main(int argc, char** argv) {
     g.count = a.count;
     g.seed = a.seed;
     g.threads = a.threads;
+    g.policyKeep = a.policyKeep;
 
     try {
         // --learner i --opp-policy F: player i follows --policy, the others

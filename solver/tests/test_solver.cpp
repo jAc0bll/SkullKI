@@ -506,3 +506,25 @@ TEST_CASE("Regret samples with exact values are consistent", "[deep][gen]") {
         REQUIRE(sum == Catch::Approx(0.0).margin(1e-3));
     }
 }
+
+TEST_CASE("Policy samples can be thinned", "[deep][gen]") {
+    GenConfig g;
+    g.round = 3;
+    g.count = 400;
+    const UniformPolicy uniform;
+    RegretSamples r0, r1, rh;
+    PolicySamples p0, p1, ph;
+    generateRegretSamples(uniform, nullptr, g, r1, p1);
+    g.policyKeep = 0.0;
+    generateRegretSamples(uniform, nullptr, g, r0, p0);
+    g.policyKeep = 0.5;
+    generateRegretSamples(uniform, nullptr, g, rh, ph);
+    REQUIRE(p0.size() == 0);
+    // Regret samples are never thinned (counts differ only because the extra
+    // random draws change the sampled games).
+    REQUIRE(static_cast<double>(r0.size()) > 0.9 * static_cast<double>(r1.size()));
+    REQUIRE(static_cast<double>(r0.size()) < 1.1 * static_cast<double>(r1.size()));
+    const double frac = static_cast<double>(ph.size()) / static_cast<double>(p1.size());
+    REQUIRE(frac > 0.4);
+    REQUIRE(frac < 0.6);
+}

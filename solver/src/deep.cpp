@@ -281,12 +281,16 @@ void generateRegretSamples(const PolicyView& sigma, const MLP* value, const GenC
                         rout.target.insert(rout.target.end(), target, target + ACT_DIM);
                         applyRound(rs, al[uniformIndex(al.n, rng)]);
                     } else {
-                        std::fill(target, target + ACT_DIM, 0.0f);
-                        for (int a = 0; a < al.n; ++a)
-                            target[actionIndex(al[a])] = static_cast<float>(pr[a]);
-                        pout.x.insert(pout.x.end(), x, x + INFO_DIM);
-                        pout.mask.insert(pout.mask.end(), mask, mask + ACT_DIM);
-                        pout.target.insert(pout.target.end(), target, target + ACT_DIM);
+                        const bool keep = cfg.policyKeep >= 1.0 ||
+                            std::uniform_real_distribution<double>(0.0, 1.0)(rng) < cfg.policyKeep;
+                        if (keep) {
+                            std::fill(target, target + ACT_DIM, 0.0f);
+                            for (int a = 0; a < al.n; ++a)
+                                target[actionIndex(al[a])] = static_cast<float>(pr[a]);
+                            pout.x.insert(pout.x.end(), x, x + INFO_DIM);
+                            pout.mask.insert(pout.mask.end(), mask, mask + ACT_DIM);
+                            pout.target.insert(pout.target.end(), target, target + ACT_DIM);
+                        }
                         applyRound(rs, al[sampleIndex(pr.data(), al.n, rng)]);
                     }
                 }

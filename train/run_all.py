@@ -112,6 +112,10 @@ def main() -> None:
     ap.add_argument("--rounds", default="1-10")
     ap.add_argument("--profile", default="full", choices=["full", "smoke"])
     ap.add_argument("--exploit-seats", default="1,4", help="seats (1-4) to attack per round")
+    ap.add_argument("--data-scale", type=int, default=0,
+                    help="multiply games/trajectories per iteration (0 = auto from CPU cores: "
+                         "1 per 48 threads, max 4). More data = less noise; generation is "
+                         "cheap on many cores")
     args = ap.parse_args()
 
     wd = args.workdir.resolve()
@@ -122,6 +126,10 @@ def main() -> None:
     seats = [int(s) - 1 for s in args.exploit_seats.split(",")]
     rounds = parse_rounds(args.rounds)
     py = sys.executable
+    scale = args.data_scale or max(1, min(4, (os.cpu_count() or 1) // 48))
+    if args.profile == "smoke":
+        scale = 1
+    print(f"data scale x{scale} ({os.cpu_count()} CPU threads)", flush=True)
 
     def status(msg: str, **extra) -> None:
         write_json(wd / "status.json", {"step": msg, "rounds": rounds, "updated": time.time(),
@@ -130,6 +138,12 @@ def main() -> None:
 
     for r in rounds:
         train_cfg, exploit_cfg = round_config(r, args.profile)
+        for cfg in (train_cfg, exploit_cfg):
+            cfg["value_games"] *= scale
+            cfg["regret_traj"] *= scale
+        # Policy samples outnumber regret samples ~3:1; thin them so the
+        # files per iteration do not grow with the data scale.
+        train_cfg["policy_keep"] = round(1.0 / scale, 4)
         rd = wd / f"round{r:02d}"
         td = rd / "train"
         if not (td / "DONE").exists():

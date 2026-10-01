@@ -130,6 +130,43 @@ class Reservoir:
 # --------------------------------------------------------------------------
 # Training
 # --------------------------------------------------------------------------
+class Batches:
+    """Random training batches drawn from numpy arrays.
+
+    On CUDA the arrays are copied to GPU memory once per training phase and
+    batches are gathered there: much faster than gathering on the CPU and
+    copying every step (that was the bottleneck: one busy CPU core, idle
+    GPU). Falls back to CPU gathering if the GPU runs out of memory."""
+
+    def __init__(self, arrays: list[np.ndarray], n: int, dev: torch.device,
+                 gen: torch.Generator):
+        self.n, self.dev, self.gen = n, dev, gen
+        self.cpu = [a[:n] for a in arrays]
+        self.gpu = None
+        if dev.type == "cuda":
+            try:
+                self.gpu = [torch.from_numpy(np.ascontiguousarray(a)).to(dev) for a in self.cpu]
+            except torch.cuda.OutOfMemoryError:
+                self.gpu = None
+                torch.cuda.empty_cache()
+                print("note: training data does not fit on the GPU, gathering on the CPU",
+                      flush=True)
+
+    def sample(self, batch: int) -> list[torch.Tensor]:
+        b = min(batch, self.n)
+        idx = torch.randint(0, self.n, (b,), generator=self.gen)
+        if self.gpu is not None:
+            idx = idx.to(self.dev)
+            return [t[idx] for t in self.gpu]
+        np_idx = idx.numpy()
+        return [torch.from_numpy(a[np_idx]).to(self.dev) for a in self.cpu]
+
+    def close(self) -> None:
+        self.gpu = None
+        if self.dev.type == "cuda":
+            torch.cuda.empty_cache()
+
+
 def train_masked(net, buf: Reservoir, steps: int, batch: int, lr: float, kind: str,
                  scale: float, gen: torch.Generator, dev: torch.device,
                  weight_power: float = 1.0) -> float:
@@ -138,14 +175,13 @@ def train_masked(net, buf: Reservoir, steps: int, batch: int, lr: float, kind: s
     Sample weight = iteration ** weight_power (1 = Linear CFR; 2 = DCFR's
     gamma=2 for the average strategy, forgetting early iterations faster)."""
     opt = torch.optim.Adam(net.parameters(), lr=lr)
-    n = buf.size
+    data = Batches([buf.x, buf.mask, buf.target, buf.iter], buf.size, dev, gen)
     last = 0.0
     for step in range(steps):
-        idx = torch.randint(0, n, (min(batch, n),), generator=gen).numpy()
-        x = torch.from_numpy(buf.x[idx]).to(dev).float()
-        m = torch.from_numpy(buf.mask[idx]).to(dev).bool()
-        y = torch.from_numpy(buf.target[idx]).to(dev)
-        w = torch.from_numpy(buf.iter[idx]).to(dev) ** weight_power
+        xb, mb, y, it = data.sample(batch)
+        x = xb.float()
+        m = mb.bool()
+        w = it ** weight_power
         w = w / w.mean()
         out = net(x)
         if kind == "regret":
@@ -160,24 +196,24 @@ def train_masked(net, buf: Reservoir, steps: int, batch: int, lr: float, kind: s
         opt.step()
         if step == steps - 1:
             last = loss.item()
+    data.close()
     return last
 
 
 def train_value(net, x: np.ndarray, y: np.ndarray, steps: int, batch: int, lr: float,
                 scale: float, gen: torch.Generator, dev: torch.device) -> float:
     opt = torch.optim.Adam(net.parameters(), lr=lr)
-    n = len(y)
+    data = Batches([x, y], len(y), dev, gen)
     last = 0.0
     for step in range(steps):
-        idx = torch.randint(0, n, (min(batch, n),), generator=gen).numpy()
-        xb = torch.from_numpy(x[idx]).to(dev).float()
-        yb = torch.from_numpy(y[idx]).to(dev) / scale
-        loss = ((net(xb).squeeze(1) - yb) ** 2).mean()
+        xb, yb = data.sample(batch)
+        loss = ((net(xb.float()).squeeze(1) - yb / scale) ** 2).mean()
         opt.zero_grad()
         loss.backward()
         opt.step()
         if step == steps - 1:
             last = loss.item()
+    data.close()
     return last
 
 
@@ -251,6 +287,8 @@ def main() -> None:
     ap.add_argument("--checkpoint-every", type=int, default=5)
     ap.add_argument("--resume", action="store_true", help="continue from workdir/ckpt if present")
     ap.add_argument("--label", default="", help="shown in progress.json (e.g. 'round 5')")
+    ap.add_argument("--policy-keep", type=float, default=1.0,
+                    help="fraction of average-strategy samples kept (thin when generating lots of data)")
     args = ap.parse_args()
 
     dev = torch.device("cuda" if args.device == "auto" and torch.cuda.is_available()
@@ -299,7 +337,9 @@ def main() -> None:
             vals = ["--exact-values"]
 
         # 2. regret + policy samples
-        run(["gen-regrets", "--count", str(args.regret_traj), "--out", str(wd / "s")] + common + vals)
+        keep = 0.0 if args.br_vs else args.policy_keep   # exploiters need no policy samples
+        run(["gen-regrets", "--count", str(args.regret_traj), "--out", str(wd / "s"),
+             "--policy-keep", str(keep)] + common + vals)
         rx, rm, rt = (np.load(wd / f"s_{k}.npy") for k in ("rx", "rmask", "rtarget"))
         regret_buf.add(rx, rm, rt, t)
         if not args.br_vs:
