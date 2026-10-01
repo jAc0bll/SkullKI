@@ -107,7 +107,8 @@ void appendBiddingSummary(const CardSet& hand, InfoKey& key) {
         } else {
             const int v = valueOf(c);
             if (v >= 13) ++pTop; else if (v >= 10) ++pMid;
-            ++plainLen[static_cast<int>(suitOf(c))];
+            const int su = static_cast<int>(suitOf(c));   // plain suit: 0..2
+            if (su < 3) ++plainLen[su];
         }
     });
     std::sort(plainLen.begin(), plainLen.end());
