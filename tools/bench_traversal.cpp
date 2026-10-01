@@ -9,9 +9,13 @@
 //    to extrapolate the time per traversal in the large rounds.
 //
 //   sk_bench_traversal [--max-round 10] [--probes 20000] [--measure-up-to 4]
+//   sk_bench_traversal --key-stats features|suit-iso|exact [--max-round 10]
 
+#include "sk/solver/abstraction.hpp"
 #include "sk/solver/mccfr.hpp"
 #include "sk/solver/round.hpp"
+
+#include <unordered_set>
 
 #include <algorithm>
 #include <chrono>
@@ -52,14 +56,54 @@ double knuthProbe(int round, int traverser, std::mt19937_64& rng) {
     return total;
 }
 
+// Saturation of an abstraction: sample decision points from random play and
+// count distinct table keys. If distinct/samples stays near 1, almost every
+// situation is unique and the table cannot pool anything.
+void keyStats(const std::string& absName, int maxRound) {
+    const auto abs = makeAbstraction(absName);
+    std::mt19937_64 rng(777);
+    std::printf("abstraction %s: distinct keys after N sampled decision points\n", absName.c_str());
+    std::printf("round |      N=1e4 |      N=1e5 |      N=1e6\n");
+    for (int r = 1; r <= maxRound; ++r) {
+        std::unordered_set<InfoKey> keys;
+        std::size_t samples = 0;
+        std::printf("%5d", r);
+        for (std::size_t target : {10000u, 100000u, 1000000u}) {
+            while (samples < target) {
+                RoundState rs = makeRoundState(r, randomDeal(r, rng));
+                while (!rs.terminal() && samples < target) {
+                    ActionList al;
+                    legalKindActions(rs.s, al);
+                    if (al.n > 1) {
+                        InfosetView v;
+                        abs->view(rs, rs.s.currentPlayer, al, v);
+                        if (v.nSlots > 1) { keys.insert(v.key); ++samples; }
+                    }
+                    std::uniform_int_distribution<int> d(0, al.n - 1);
+                    applyRound(rs, al[d(rng)]);
+                }
+            }
+            std::printf(" | %10zu", keys.size());
+        }
+        std::printf("\n");
+        std::fflush(stdout);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     int maxRound = 10, probes = 20000, measureUpTo = 4;
+    std::string keysFor;
     for (int i = 1; i + 1 < argc; i += 2) {
         if      (!std::strcmp(argv[i], "--max-round"))     maxRound = std::atoi(argv[i + 1]);
         else if (!std::strcmp(argv[i], "--probes"))        probes = std::atoi(argv[i + 1]);
         else if (!std::strcmp(argv[i], "--measure-up-to")) measureUpTo = std::atoi(argv[i + 1]);
+        else if (!std::strcmp(argv[i], "--key-stats"))     keysFor = argv[i + 1];
+    }
+    if (!keysFor.empty()) {
+        keyStats(keysFor, maxRound);
+        return 0;
     }
 
     std::mt19937_64 rng(12345);

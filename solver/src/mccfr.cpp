@@ -55,43 +55,51 @@ struct Worker {
         }
 
         cfg->abstraction->view(rs, p, al, view);
+        if (view.nSlots == 1) {   // all legal actions equivalent: no decision
+            RoundState child = rs;
+            applyRound(child, al[0]);
+            return walk(child, traverser);
+        }
         InfoNode& node = table->findOrCreate(view.key, view.nSlots);
         Delta& delta = deltas[&node];
-        // Strategy in real action order (view is reused by the recursion).
-        std::array<double, CAP> sigma;
-        std::array<std::uint8_t, CAP> slot;
-        for (int a = 0; a < al.n; ++a) {
-            slot[a]  = view.slot[a];
-            sigma[a] = node.current[slot[a]];
-        }
+        // The solver works on slots; each slot is played through one
+        // representative real action (merged actions are equivalent under
+        // the abstraction). `view` is reused by the recursion, so copy.
+        const int nS = view.nSlots;
+        std::array<int, CAP> rep;
+        rep.fill(-1);
+        for (int a = 0; a < al.n; ++a)
+            if (rep[view.slot[a]] < 0) rep[view.slot[a]] = a;
+        const double* sigma = node.current.data();
         std::uniform_real_distribution<double> u(0.0, 1.0);
 
         if (p == traverser) {
             std::array<double, CAP> v{};
             std::array<bool, CAP> explored{};
             double ev = 0.0;
-            for (int a = 0; a < al.n; ++a) {
-                if (prune && sigma[a] == 0.0 && u(rng) < cfg->pruneProb) continue;
-                explored[a] = true;
+            for (int k = 0; k < nS; ++k) {
+                if (prune && sigma[k] == 0.0 && u(rng) < cfg->pruneProb) continue;
+                explored[k] = true;
                 RoundState child = rs;
-                applyRound(child, al[a]);
-                v[a] = walk(child, traverser);
-                ev += sigma[a] * v[a];
+                applyRound(child, al[rep[k]]);
+                v[k] = walk(child, traverser);
+                ev += sigma[k] * v[k];
             }
-            for (int a = 0; a < al.n; ++a)
-                if (explored[a]) delta.dR[slot[a]] += v[a] - ev;
+            for (int k = 0; k < nS; ++k)
+                if (explored[k]) delta.dR[k] += v[k] - ev;
             return ev;
         }
 
         // Opponent node: stochastically-weighted average-strategy update,
-        // then follow one sampled action.
-        for (int a = 0; a < al.n; ++a) delta.dS[slot[a]] += sigma[a];
+        // then follow one sampled slot.
+        for (int k = 0; k < nS; ++k) delta.dS[k] += sigma[k];
         double r = u(rng);
-        int pick = al.n - 1;
-        for (int a = 0; a < al.n; ++a) {
-            r -= sigma[a];
-            if (r < 0.0) { pick = a; break; }
+        int pickSlot = nS - 1;
+        for (int k = 0; k < nS; ++k) {
+            r -= sigma[k];
+            if (r < 0.0) { pickSlot = k; break; }
         }
+        const int pick = rep[pickSlot];
         RoundState child = rs;
         applyRound(child, al[pick]);
         return walk(child, traverser);

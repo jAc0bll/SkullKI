@@ -56,13 +56,26 @@ void AveragePolicy::probs(const RoundState& rs, int player, const ActionList& le
     abs_.view(rs, player, legal, v);
     const InfoNode* n = t_.find(v.key);
     if (!n) {
-        for (int a = 0; a < legal.n; ++a) out[a] = 1.0 / legal.n;
+        // Unseen infoset: uniform over slots, through the representatives.
+        std::array<bool, ActionList::CAPACITY> taken{};
+        for (int a = 0; a < legal.n; ++a) {
+            const int k = v.slot[a];
+            out[a] = taken[k] ? 0.0 : 1.0 / v.nSlots;
+            taken[k] = true;
+        }
         return;
     }
     assert(n->nA == v.nSlots);
     std::array<double, ActionList::CAPACITY> avg;
     n->averageStrategy(avg.data());
-    for (int a = 0; a < legal.n; ++a) out[a] = avg[v.slot[a]];
+    // A slot's probability goes to its first (representative) real action,
+    // matching how the solver plays merged actions.
+    std::array<bool, ActionList::CAPACITY> taken{};
+    for (int a = 0; a < legal.n; ++a) {
+        const int k = v.slot[a];
+        out[a] = taken[k] ? 0.0 : avg[k];
+        taken[k] = true;
+    }
 }
 
 } // namespace sk::solver

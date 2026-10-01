@@ -31,8 +31,9 @@ struct InfosetView {
 // exactly on round 1 (NashConv of the abstract strategy in the real game).
 //
 // Contract: the view may only depend on what `player` knows, and the same
-// real infoset must always produce the same key and slots. Action
-// abstraction is not supported yet: nSlots == legal.n, slot is a bijection.
+// real infoset must always produce the same key and slots. Several real
+// actions may share a slot (action abstraction); the solver then always
+// plays the first real action of that slot (its representative).
 class Abstraction {
 public:
     virtual ~Abstraction() = default;
@@ -57,6 +58,17 @@ public:
     void view(const RoundState& rs, int player, const ActionList& legal,
               InfosetView& out) const override;
     std::string name() const override { return "suit-iso"; }
+};
+
+// Lossy: describes situations by strategic features (bid status of every
+// player, what currently wins the trick, unseen specials, per-card
+// descriptors) instead of card identities; equivalent cards share an action.
+// See feature_abstraction.cpp for the exact feature list.
+class FeatureAbstraction final : public Abstraction {
+public:
+    void view(const RoundState& rs, int player, const ActionList& legal,
+              InfosetView& out) const override;
+    std::string name() const override { return "features"; }
 };
 
 const Abstraction& exactAbstraction();

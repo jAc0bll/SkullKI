@@ -98,6 +98,7 @@ const Abstraction& exactAbstraction() {
 std::shared_ptr<const Abstraction> makeAbstraction(const std::string& name) {
     if (name == "exact")    return std::make_shared<ExactAbstraction>();
     if (name == "suit-iso") return std::make_shared<SuitIsomorphism>();
+    if (name == "features") return std::make_shared<FeatureAbstraction>();
     throw std::invalid_argument("unknown abstraction: " + name);
 }
 

@@ -52,7 +52,8 @@ Engine decisions that affect the solution:
 | 0 | Engine fixes: simultaneous bidding, voids, mermaid bonus, allocation-free legal moves | ✅ |
 | 1 | Exact solver for one round: full-width Discounted CFR + exact best response / NashConv (`solver/`, `sk_solve_round`) | ✅ round 1 |
 | 2a | Sampled CFR (external-sampling MCCFR) measured against the exact round 1 | ✅ |
-| 2b | Rounds 2–10 (4p): sampled traverser actions + neural networks (ESCHER / Deep CFR family), validated against round 1 | next |
+| 2b | Abstraction framework: suit isomorphism (lossless), feature abstraction (lossy), pruning — round 1 solved in 6 s at NashConv 0.0001 | ✅ |
+| 2c | Rounds 4–10 (4p): tables saturate (≥ 90 % unique keys) → neural networks on the same features (Deep CFR family with sampled traverser actions), validated against round 1 | next |
 | 3 | Decision-time subgame solving for a concrete spot | planned |
 | 4 | Win-probability value function, re-solve with win utility | planned |
 | 2p | 2-player engine mode, exact solutions for small rounds, true GTO | planned |

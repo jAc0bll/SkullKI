@@ -55,7 +55,7 @@ void usage() {
         "usage: sk_solve_round [--method dcfr|mccfr] [--round R] [--iters N] [--eval-every K]\n"
         "                      [--threads T] [--utility relative|absolute] [--out FILE.csv]\n"
         "                      [--dump-all] [--deals-per-batch N] [--linear] [--seed S]\n"
-        "                      [--abstraction exact|suit-iso] [--prune P] [--prune-after B]");
+        "                      [--abstraction exact|suit-iso|features] [--prune P] [--prune-after B]");
 }
 
 Args parse(int argc, char** argv) {

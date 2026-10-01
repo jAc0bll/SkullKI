@@ -327,3 +327,66 @@ TEST_CASE("MCCFR with suit isomorphism needs fewer infosets", "[solver][abstract
     for (int i = 0; i < 5; ++i) { exact.runBatch(); iso.runBatch(); }
     REQUIRE(iso.table().size() < exact.table().size());
 }
+
+TEST_CASE("Feature abstraction: private, well-formed slots", "[solver][abstraction][features]") {
+    const FeatureAbstraction fa;
+    std::mt19937_64 rng(47);
+    for (int trial = 0; trial < 2000; ++trial) {
+        const int round = 1 + trial % 10;
+        RoundState rs = makeRoundState(round, randomHands(round, rng));
+        std::uniform_int_distribution<int> steps(0, N_PLAYERS * (round + 1));
+        const int n = steps(rng);
+        for (int i = 0; i < n && !rs.terminal(); ++i) {
+            ActionList al;
+            legalKindActions(rs.s, al);
+            std::uniform_int_distribution<int> d(0, al.n - 1);
+            applyRound(rs, al[d(rng)]);
+        }
+        if (rs.terminal()) continue;
+        const int p = rs.s.currentPlayer;
+        ActionList al;
+        legalKindActions(rs.s, al);
+        InfosetView v;
+        fa.view(rs, p, al, v);
+
+        // Every slot is used, slots are in range.
+        REQUIRE(v.nSlots >= 1);
+        REQUIRE(v.nSlots <= al.n);
+        std::array<bool, ActionList::CAPACITY> used{};
+        for (int a = 0; a < al.n; ++a) {
+            REQUIRE(v.slot[a] < v.nSlots);
+            used[v.slot[a]] = true;
+        }
+        for (int k = 0; k < v.nSlots; ++k) REQUIRE(used[k]);
+
+        // Swapping two opponents' hidden hands (same sizes) changes nothing.
+        const int q1 = (p + 1) % N_PLAYERS, q2 = (p + 2) % N_PLAYERS;
+        if (rs.s.hands[q1].count() == rs.s.hands[q2].count()) {
+            RoundState other = rs;
+            std::swap(other.s.hands[q1], other.s.hands[q2]);
+            InfosetView w;
+            fa.view(other, p, al, w);
+            REQUIRE(w.key == v.key);
+        }
+        // Hidden bids during bidding do not leak into the key.
+        if (rs.s.phase == Phase::Bidding) {
+            RoundState other = rs;
+            for (int q = 0; q < N_PLAYERS; ++q)
+                if (q != p && other.s.bids[q] >= 0) other.s.bids[q] = (other.s.bids[q] + 1) % (round + 1);
+            InfosetView w;
+            fa.view(other, p, al, w);
+            REQUIRE(w.key == v.key);
+        }
+    }
+}
+
+TEST_CASE("Feature abstraction keeps big-round tables small", "[solver][abstraction][features]") {
+    MCCFRConfig c;
+    c.round = 5;
+    c.dealsPerBatch = 2000;
+    ExternalSamplingMCCFR exact(c);
+    c.abstraction = makeAbstraction("features");
+    ExternalSamplingMCCFR feat(c);
+    for (int i = 0; i < 2; ++i) { exact.runBatch(); feat.runBatch(); }
+    REQUIRE(feat.table().size() * 3 < exact.table().size());
+}
