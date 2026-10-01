@@ -91,5 +91,5 @@ Full-width tabular CFR is out of reach, as is an exact best response for
 - **Decided: pure heads-up, no Graybeard.** (The official 2-player rules add
   Graybeard, a ghost hand played second in every trick; we do not model it.)
 - 2p rounds 1–2 are small enough for exact solving with the existing
-  full-width solver (round 2 heads-up: ~5·10⁶ deals
-  ), round 3 with sampling.
+  full-width solver (round 2 heads-up: ~5·10⁶ deals),
+  round 3 with sampling.
