@@ -282,6 +282,10 @@ def main() -> None:
     ap.add_argument("--br-vs", type=Path, default=None,
                     help="train a best response for --br-player against this average-strategy net")
     ap.add_argument("--br-player", type=int, default=0)
+    ap.add_argument("--br-method", default="cfr", choices=["pi", "cfr"],
+                    help="exploiter: pi = policy iteration (greedy, current data only); "
+                         "cfr = regret minimisation over all iterations, both starting "
+                         "from the strategy under test")
     ap.add_argument("--match-deals", type=int, default=2_000_000)
     ap.add_argument("--device", default="auto", help="auto | cpu | cuda")
     ap.add_argument("--checkpoint-every", type=int, default=5)
@@ -316,10 +320,25 @@ def main() -> None:
 
     for t in range(start_iter + 1, args.iters + 1):
         it0 = time.time()
-        pol = ["--policy", str(policy_path)] if policy_path else []
         if args.br_vs:
+            # Exploiter against the fixed other seats, starting from the strategy
+            # under test itself (starting from uniform, 20 iterations were not
+            # enough to even catch up with it from round 4 on).
+            #   cfr (default): regret minimisation over all iterations, measured
+            #       both as regret matching and as always-best-action.
+            #   pi: policy iteration (greedy on the current data only). Exact in
+            #       round 1, but in multi-decision rounds the max over noisy
+            #       advantage estimates picks overestimated moves and it ends up
+            #       far below the strategy it attacks.
+            if policy_path is None:
+                pol = ["--policy", str(args.br_vs), "--mode", "softmax"]
+            else:
+                pol = ["--policy", str(policy_path),
+                       "--mode", "argmax" if args.br_method == "pi" else "rm"]
             pol += ["--learner", str(args.br_player), "--opp-policy", str(args.br_vs),
                     "--opp-mode", "softmax"]
+        else:
+            pol = ["--policy", str(policy_path)] if policy_path else []
         common = ["--round", str(args.round), "--seed", str(args.seed * 1000 + t)] + pol
         rec = {"iter": t}
 
@@ -341,6 +360,9 @@ def main() -> None:
         run(["gen-regrets", "--count", str(args.regret_traj), "--out", str(wd / "s"),
              "--policy-keep", str(keep)] + common + vals)
         rx, rm, rt = (np.load(wd / f"s_{k}.npy") for k in ("rx", "rmask", "rtarget"))
+        if args.br_vs and args.br_method == "pi":
+            # Policy iteration: advantages relative to the CURRENT policy only.
+            regret_buf.size = regret_buf.seen = 0
         regret_buf.add(rx, rm, rt, t)
         if not args.br_vs:
             px, pm, pt = (np.load(wd / f"s_{k}.npy") for k in ("px", "pmask", "ptarget"))
@@ -363,10 +385,10 @@ def main() -> None:
             seat = ["--round", str(args.round), "--learner", str(args.br_player),
                     "--opp-policy", str(args.br_vs), "--count", str(args.match_deals),
                     "--seed", str(424242)]
-            rec["br_match"] = run(["match", "--policy", str(policy_path), "--mode", "rm"] + seat)
-            # A best response against fixed opponents should be deterministic:
-            # also measure always playing the highest-regret action.
-            rec["br_match_argmax"] = run(["match", "--policy", str(policy_path), "--mode", "argmax"]
+            rec["br_match"] = run(["match", "--policy", str(policy_path), "--mode", "argmax"]
+                                  + seat)
+            if args.br_method == "cfr":
+                rec["br_match_rm"] = run(["match", "--policy", str(policy_path), "--mode", "rm"]
                                          + seat)
             rec["base_match"] = run(["match", "--policy", str(args.br_vs), "--mode", "softmax"] + seat)
 

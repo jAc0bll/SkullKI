@@ -106,19 +106,22 @@ def exploit_gain(ed: Path) -> dict | None:
     log = ed / "log.jsonl"
     if not log.exists():
         return None
-    last = [json.loads(l) for l in log.read_text().splitlines() if l.strip()]
-    last = [r for r in last if "br_match" in r]
-    if not last:
+    evals = [json.loads(l) for l in log.read_text().splitlines() if l.strip()]
+    evals = [r for r in evals if "br_match" in r]
+    if not evals:
         return None
-    base = MATCH_RE.search(last[-1]["base_match"])
-    # Best of the exploiter's policy variants (mixed / always-best-action).
+    base = MATCH_RE.search(evals[-1]["base_match"])
+    # Every evaluated exploiter is a valid lower bound; keep the strongest
+    # (all matches use the same deals, so they are directly comparable).
     best = None
-    for key, mode in (("br_match", "rm"), ("br_match_argmax", "argmax")):
-        if key not in last[-1]:
-            continue
-        m = MATCH_RE.search(last[-1][key])
-        if best is None or float(m.group(1)) > float(best[0].group(1)):
-            best = (m, mode)
+    for rec in evals:
+        for key, mode in (("br_match", "argmax"), ("br_match_argmax", "argmax"),
+                          ("br_match_rm", "rm")):
+            if key not in rec:
+                continue
+            m = MATCH_RE.search(rec[key])
+            if best is None or float(m.group(1)) > float(best[0].group(1)):
+                best = (m, f"{mode}@{rec['iter']}")
     br, mode = best
     gain = float(br.group(1)) - float(base.group(1))
     err = (float(br.group(2)) ** 2 + float(base.group(2)) ** 2) ** 0.5
