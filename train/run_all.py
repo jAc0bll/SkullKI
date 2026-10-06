@@ -110,11 +110,19 @@ def exploit_gain(ed: Path) -> dict | None:
     last = [r for r in last if "br_match" in r]
     if not last:
         return None
-    br = MATCH_RE.search(last[-1]["br_match"])
     base = MATCH_RE.search(last[-1]["base_match"])
+    # Best of the exploiter's policy variants (mixed / always-best-action).
+    best = None
+    for key, mode in (("br_match", "rm"), ("br_match_argmax", "argmax")):
+        if key not in last[-1]:
+            continue
+        m = MATCH_RE.search(last[-1][key])
+        if best is None or float(m.group(1)) > float(best[0].group(1)):
+            best = (m, mode)
+    br, mode = best
     gain = float(br.group(1)) - float(base.group(1))
     err = (float(br.group(2)) ** 2 + float(base.group(2)) ** 2) ** 0.5
-    return {"gain": round(gain, 4), "stderr": round(err, 4),
+    return {"gain": round(gain, 4), "stderr": round(err, 4), "mode": mode,
             "exploiter_utility": float(br.group(1)), "baseline_utility": float(base.group(1))}
 
 
@@ -124,6 +132,8 @@ def main() -> None:
     ap.add_argument("--rounds", default="1-10")
     ap.add_argument("--profile", default="full", choices=["full", "smoke"])
     ap.add_argument("--exploit-seats", default="1,4", help="seats (1-4) to attack per round")
+    ap.add_argument("--redo-exploiters", action="store_true",
+                    help="delete and re-run the exploiters of the selected rounds (training is kept)")
     ap.add_argument("--data-scale", type=int, default=0,
                     help="multiply games/trajectories per iteration (0 = auto from CPU cores: "
                          "1 per 48 threads, max 4). More data = less noise; generation is "
@@ -169,6 +179,8 @@ def main() -> None:
         result = summary.get(str(r), {"round": r})
         for seat in seats:
             ed = rd / f"exploit_seat{seat + 1}"
+            if args.redo_exploiters and (ed / "DONE").exists():
+                shutil.move(str(ed), str(ed) + f".old{int(time.time())}")
             if not (ed / "DONE").exists():
                 status(f"round {r}: exploiter seat {seat + 1}", round=r, phase="exploit",
                        dir=str(ed))

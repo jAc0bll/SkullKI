@@ -23,6 +23,13 @@ void NetPolicy::probs(const RoundState& rs, int player, const ActionList& legal,
     encodeInfoset(rs, player, x);
     net_->forward(x, o);
 
+    if (mode_ == NetMode::Argmax) {
+        int best = 0;
+        for (int a = 1; a < legal.n; ++a)
+            if (o[actionIndex(legal[a])] > o[actionIndex(legal[best])]) best = a;
+        for (int a = 0; a < legal.n; ++a) out[a] = a == best ? 1.0 : 0.0;
+        return;
+    }
     if (mode_ == NetMode::RegretMatching) {
         double pos = 0.0;
         int best = 0;

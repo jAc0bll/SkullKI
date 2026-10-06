@@ -19,7 +19,7 @@ if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
 echo "==> system packages"
 $SUDO apt-get update -qq
 DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq \
-    git build-essential cmake ninja-build python3 python3-venv python3-pip tmux htop >/dev/null
+    git build-essential cmake ninja-build python3 python3-venv python3-pip tmux htop rsync >/dev/null
 
 echo "==> repository ($BRANCH) in $DIR"
 if [ -d "$DIR/.git" ]; then

@@ -364,6 +364,10 @@ def main() -> None:
                     "--opp-policy", str(args.br_vs), "--count", str(args.match_deals),
                     "--seed", str(424242)]
             rec["br_match"] = run(["match", "--policy", str(policy_path), "--mode", "rm"] + seat)
+            # A best response against fixed opponents should be deterministic:
+            # also measure always playing the highest-regret action.
+            rec["br_match_argmax"] = run(["match", "--policy", str(policy_path), "--mode", "argmax"]
+                                         + seat)
             rec["base_match"] = run(["match", "--policy", str(args.br_vs), "--mode", "softmax"] + seat)
 
         # Average strategy (+ exact evaluation in round 1)

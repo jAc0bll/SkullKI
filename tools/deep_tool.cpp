@@ -37,7 +37,7 @@ struct Args {
 [[noreturn]] void usage() {
     std::puts("usage: sk_deep gen-values|gen-regrets|eval [--round R] [--policy F] [--value F]\n"
               "               [--exact-values] [--count N] [--out PREFIX] [--seed S]\n"
-              "               [--mode rm|softmax] [--threads T]");
+              "               [--mode rm|softmax|argmax] [--threads T]");
     std::exit(2);
 }
 
@@ -70,8 +70,10 @@ std::unique_ptr<PolicyView> loadPolicy(const std::string& path, const std::strin
     auto net = std::make_shared<const MLP>(MLP::load(path));
     if (net->inputDim() != INFO_DIM || net->outputDim() != ACT_DIM)
         throw std::runtime_error("policy net has wrong shape: " + path);
-    return std::make_unique<NetPolicy>(net, mode == "softmax" ? NetMode::Softmax
-                                                              : NetMode::RegretMatching);
+    const NetMode m = mode == "softmax" ? NetMode::Softmax
+                    : mode == "argmax"  ? NetMode::Argmax
+                                        : NetMode::RegretMatching;
+    return std::make_unique<NetPolicy>(net, m);
 }
 
 double secondsSince(std::chrono::steady_clock::time_point t0) {

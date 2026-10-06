@@ -6,7 +6,7 @@ wie viel ein trainierter Ausnutzer gegen die Strategie herausholt.
 ## 1. Server mieten
 
 Empfehlung: **1× NVIDIA-GPU** (RTX 4090 / A5000 / L40S o. ä.), **32+ CPU-Kerne**,
-**64 GB RAM**, **150 GB Festplatte**, Ubuntu 22.04 oder 24.04 (z. B. RunPod oder
+**64 GB RAM**, **mindestens 150 GB Festplatte (besser 200 GB)**, Ubuntu 22.04 oder 24.04 (z. B. RunPod oder
 vast.ai). Mehrere GPUs bringen nichts. Die Spiele laufen auf den CPU-Kernen,
 die GPU trainiert nur die Netze.
 
@@ -81,6 +81,36 @@ bash scripts/cleanup.sh
 
 Bedarf während des Laufs: höchstens ~20 GB für den gerade laufenden Schritt,
 plus ~10 GB für PyTorch und Build.
+
+## Umzug auf einen anderen Server (auch mitten im Training)
+
+Alles ist fortsetzbar, deshalb kann der Stand direkt von Server zu Server
+kopiert werden:
+
+1. **Neuen Server** mieten und einrichten (`server_setup.sh`, siehe oben).
+2. **Alter Server:** Training stoppen und Platz schaffen:
+   ```bash
+   cd ~/SkullKI && bash scripts/stop.sh && bash scripts/cleanup.sh
+   apt-get install -y rsync
+   ```
+3. **Neuer Server:** SSH-Schlüssel erzeugen und anzeigen:
+   ```bash
+   ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519 && cat ~/.ssh/id_ed25519.pub
+   ```
+4. **Alter Server:** die angezeigte Zeile (beginnt mit `ssh-ed25519`) erlauben:
+   ```bash
+   echo "ssh-ed25519 AAAA...<die ganze Zeile>" >> ~/.ssh/authorized_keys
+   ```
+5. **Neuer Server:** Stand herüberziehen und weitermachen. IP und SSH-Port des
+   alten Servers stehen bei vast.ai auf der Instanz unter "Connect"/"SSH":
+   ```bash
+   cd ~/SkullKI
+   bash scripts/migrate_pull.sh root@<alte-ip> <alter-port>
+   bash scripts/start.sh
+   ```
+
+Fertige Runden werden nicht wiederholt; der laufende Schritt geht beim letzten
+Zwischenstand weiter.
 
 ## 6. Ergebnisse sichern
 

@@ -34,6 +34,8 @@ namespace sk::solver {
 enum class NetMode : std::uint8_t {
     RegretMatching,   // output = regrets; positive part, else best action
     Softmax,          // output = logits of the average strategy
+    Argmax,           // output = regrets; always the highest one (best responses
+                      // against fixed opponents should be deterministic)
 };
 
 // Strategy given by a network over the legal actions.
