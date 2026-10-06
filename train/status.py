@@ -53,7 +53,10 @@ def snapshot(wd: Path) -> str:
     lines = []
     status = load(wd / "status.json") or {}
     summary = load(wd / "summary.json") or {}
-    rounds = status.get("rounds") or sorted(int(k) for k in summary) or list(range(1, 11))
+    # All rounds that exist anywhere (a later partial run, e.g. --redo-exploiters
+    # --rounds 1-4, must not hide the others).
+    found = {int(p.name[5:]) for p in wd.glob("round[0-9][0-9]")}
+    rounds = sorted(found | {int(k) for k in summary} | set(status.get("rounds") or []))         or list(range(1, 11))
     alive = pid_alive(status.get("pid"), status, wd)
     lines.append(f"Skull King GTO training  |  {wd}")
     if status.get("step") == "all done":
