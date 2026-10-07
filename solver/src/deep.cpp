@@ -114,6 +114,21 @@ void MaterializedPolicy::probs(const RoundState& rs, int player, const ActionLis
     inner_.probs(rs, player, legal, out);   // not reached for the round it was built for
 }
 
+void ImprovedPolicy::probs(const RoundState& rs, int player, const ActionList& legal,
+                           double* out) const
+{
+    base_->probs(rs, player, legal, out);
+    std::uint8_t x[INFO_DIM];
+    float o[ACT_DIM];
+    encodeInfoset(rs, player, x);
+    adv_->forward(x, o);
+    int best = 0;
+    for (int a = 1; a < legal.n; ++a)
+        if (o[actionIndex(legal[a])] > o[actionIndex(legal[best])]) best = a;
+    if (o[actionIndex(legal[best])] > tau_)
+        for (int a = 0; a < legal.n; ++a) out[a] = a == best ? 1.0 : 0.0;
+}
+
 // ---------------------------------------------------------------------------
 // Sampling helpers
 // ---------------------------------------------------------------------------

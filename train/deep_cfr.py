@@ -31,6 +31,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -224,6 +226,9 @@ def run(cmd: list[str]) -> str:
     return res.stdout.strip()
 
 
+MATCH = re.compile(r"utility ([+-][0-9.]+) \+- ([0-9.]+)")
+
+
 def write_json(path: Path, obj: dict) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(obj, indent=1))
@@ -282,10 +287,15 @@ def main() -> None:
     ap.add_argument("--br-vs", type=Path, default=None,
                     help="train a best response for --br-player against this average-strategy net")
     ap.add_argument("--br-player", type=int, default=0)
-    ap.add_argument("--br-method", default="cfr", choices=["pi", "cfr"],
-                    help="exploiter: pi = policy iteration (greedy, current data only); "
-                         "cfr = regret minimisation over all iterations, both starting "
-                         "from the strategy under test")
+    ap.add_argument("--br-method", default="cfr", choices=["cfr", "improve", "pi"],
+                    help="exploiter: cfr = regret minimisation over all iterations with "
+                         "candidate selection (default); improve = confident one-step "
+                         "improvement (safe but finds little in multi-decision rounds); "
+                         "pi = policy iteration. All start from the strategy under test")
+    ap.add_argument("--improve-data", type=int, default=3,
+                    help="improve: multiply games/trajectories of its single iteration")
+    ap.add_argument("--improve-steps", type=int, default=4,
+                    help="improve: multiply value/regret training steps of its single iteration")
     ap.add_argument("--match-deals", type=int, default=2_000_000)
     ap.add_argument("--device", default="auto", help="auto | cpu | cuda")
     ap.add_argument("--checkpoint-every", type=int, default=5)
@@ -294,6 +304,15 @@ def main() -> None:
     ap.add_argument("--policy-keep", type=float, default=1.0,
                     help="fraction of average-strategy samples kept (thin when generating lots of data)")
     args = ap.parse_args()
+
+    if args.br_vs and args.br_method == "improve":
+        # One iteration with much more data and training: advantages relative
+        # to the strategy itself, then a thresholded improvement (see below).
+        args.iters = args.eval_every = 1
+        args.value_games *= args.improve_data
+        args.regret_traj *= args.improve_data
+        args.value_steps *= args.improve_steps
+        args.regret_steps *= args.improve_steps
 
     dev = torch.device("cuda" if args.device == "auto" and torch.cuda.is_available()
                        else ("cpu" if args.device == "auto" else args.device))
@@ -317,6 +336,13 @@ def main() -> None:
     print(f"device {dev}", flush=True)
     t_start = time.time() - elapsed_before
     iter_times: list[float] = []
+    base_sel: float | None = None
+    cands: list[dict] = []
+    if args.br_vs and (wd / "log.jsonl").exists():
+        for line in (wd / "log.jsonl").read_text().splitlines():
+            if line.strip():
+                cands += [c for c in json.loads(line).get("candidates", [])
+                          if c["iter"] <= start_iter and Path(c["file"]).exists()]
 
     for t in range(start_iter + 1, args.iters + 1):
         it0 = time.time()
@@ -360,7 +386,7 @@ def main() -> None:
         run(["gen-regrets", "--count", str(args.regret_traj), "--out", str(wd / "s"),
              "--policy-keep", str(keep)] + common + vals)
         rx, rm, rt = (np.load(wd / f"s_{k}.npy") for k in ("rx", "rmask", "rtarget"))
-        if args.br_vs and args.br_method == "pi":
+        if args.br_vs and args.br_method in ("pi", "improve"):
             # Policy iteration: advantages relative to the CURRENT policy only.
             regret_buf.size = regret_buf.seen = 0
         regret_buf.add(rx, rm, rt, t)
@@ -381,16 +407,63 @@ def main() -> None:
         is_eval = t % args.eval_every == 0 or t == args.iters
 
         # Best-response mode: how much does the trained seat gain?
-        if args.br_vs and is_eval:
-            seat = ["--round", str(args.round), "--learner", str(args.br_player),
-                    "--opp-policy", str(args.br_vs), "--count", str(args.match_deals),
-                    "--seed", str(424242)]
-            rec["br_match"] = run(["match", "--policy", str(policy_path), "--mode", "argmax"]
-                                  + seat)
-            if args.br_method == "cfr":
-                rec["br_match_rm"] = run(["match", "--policy", str(policy_path), "--mode", "rm"]
-                                         + seat)
-            rec["base_match"] = run(["match", "--policy", str(args.br_vs), "--mode", "softmax"] + seat)
+        if args.br_vs and is_eval and args.br_method == "improve":
+            # The advantage net was trained relative to the strategy itself.
+            # Deviate only where it is confident (advantage > tau points);
+            # tau = inf is the strategy itself, so this cannot fall below it.
+            # tau is chosen on one set of deals and measured on fresh ones.
+            def seat_args(deals: int, seed: int) -> list[str]:
+                return ["--round", str(args.round), "--learner", str(args.br_player),
+                        "--opp-policy", str(args.br_vs), "--count", str(deals), "--seed", str(seed)]
+            improve = ["--policy", str(policy_path), "--mode", "improve",
+                       "--improve-base", str(args.br_vs)]
+            sel = seat_args(max(args.match_deals // 2, 1), 777001)
+            base_sel = MATCH.search(run(["match", "--policy", str(args.br_vs), "--mode", "softmax"]
+                                        + sel))
+            scan = {}
+            for tau in (0, 1, 2, 4, 8, 16, 32):
+                m = MATCH.search(run(["match"] + improve + ["--tau", str(tau)] + sel))
+                scan[tau] = round(float(m.group(1)) - float(base_sel.group(1)), 4)
+            best_tau = max(scan, key=scan.get)
+            rec["tau_scan"] = scan
+            rec["tau"] = best_tau
+            fresh = seat_args(args.match_deals, 424242)
+            rec["br_match"] = run(["match"] + improve + ["--tau", str(best_tau)] + fresh)
+            rec["base_match"] = run(["match", "--policy", str(args.br_vs), "--mode", "softmax"]
+                                    + fresh)
+        elif args.br_vs and is_eval:
+            # Candidate selection: every evaluated snapshot (argmax and regret
+            # matching) and the strategy itself compete on one set of deals;
+            # the winner is measured on fresh deals at the end. With the
+            # strategy itself as a candidate the reported gain cannot go
+            # negative, yet real weaknesses found by the exploiter still count.
+            def seat_args(deals: int, seed: int) -> list[str]:
+                return ["--round", str(args.round), "--learner", str(args.br_player),
+                        "--opp-policy", str(args.br_vs), "--count", str(deals), "--seed", str(seed)]
+            sel = seat_args(max(args.match_deals // 2, 1), 777001)
+            if base_sel is None:
+                base_sel = float(MATCH.search(run(["match", "--policy", str(args.br_vs),
+                                                   "--mode", "softmax"] + sel)).group(1))
+            snap = wd / f"regret_it{t}.bin"
+            shutil.copyfile(policy_path, snap)
+            for mode in ("argmax", "rm"):
+                u = float(MATCH.search(run(["match", "--policy", str(snap), "--mode", mode]
+                                           + sel)).group(1))
+                cands.append({"iter": t, "mode": mode, "file": str(snap),
+                              "sel_gain": round(u - base_sel, 4)})
+            rec["candidates"] = [c for c in cands if c["iter"] == t]
+            if t == args.iters:
+                best = max(cands, key=lambda c: c["sel_gain"])
+                fresh = seat_args(args.match_deals, 424242)
+                rec["base_match"] = run(["match", "--policy", str(args.br_vs), "--mode", "softmax"]
+                                        + fresh)
+                if best["sel_gain"] > 0:
+                    rec["chosen"] = best
+                    rec["br_match"] = run(["match", "--policy", best["file"], "--mode", best["mode"]]
+                                          + fresh)
+                else:   # no snapshot beat the strategy itself
+                    rec["chosen"] = {"mode": "strategy itself"}
+                    rec["br_match"] = rec["base_match"]
 
         # Average strategy (+ exact evaluation in round 1)
         if not args.br_vs and is_eval:

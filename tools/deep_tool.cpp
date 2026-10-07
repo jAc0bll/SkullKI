@@ -28,6 +28,8 @@ namespace {
 struct Args {
     std::string cmd, policy, value, out, mode = "rm", oppPolicy, oppMode = "softmax";
     int learner = -1;
+    std::string improveBase;
+    double tau = 0.0;
     int round = 1, count = 10000, threads = 0;
     std::uint64_t seed = 1;
     bool exactValues = false;
@@ -37,7 +39,8 @@ struct Args {
 [[noreturn]] void usage() {
     std::puts("usage: sk_deep gen-values|gen-regrets|eval [--round R] [--policy F] [--value F]\n"
               "               [--exact-values] [--count N] [--out PREFIX] [--seed S]\n"
-              "               [--mode rm|softmax|argmax] [--threads T]");
+              "               [--mode rm|softmax|argmax|improve] [--improve-base F --tau T]\n"
+              "               [--threads T]");
     std::exit(2);
 }
 
@@ -60,16 +63,24 @@ Args parse(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--opp-policy")) a.oppPolicy = next();
         else if (!std::strcmp(argv[i], "--opp-mode"))   a.oppMode = next();
         else if (!std::strcmp(argv[i], "--learner"))    a.learner = std::atoi(next());
+        else if (!std::strcmp(argv[i], "--improve-base")) a.improveBase = next();
+        else if (!std::strcmp(argv[i], "--tau"))        a.tau = std::atof(next());
         else usage();
     }
     return a;
 }
 
-std::unique_ptr<PolicyView> loadPolicy(const std::string& path, const std::string& mode) {
+std::unique_ptr<PolicyView> loadPolicy(const std::string& path, const std::string& mode,
+                                       const std::string& improveBase = "", double tau = 0.0) {
     if (path.empty() || path == "uniform") return std::make_unique<UniformPolicy>();
     auto net = std::make_shared<const MLP>(MLP::load(path));
     if (net->inputDim() != INFO_DIM || net->outputDim() != ACT_DIM)
         throw std::runtime_error("policy net has wrong shape: " + path);
+    if (mode == "improve") {
+        // `path` holds advantages relative to `improveBase` (softmax net).
+        if (improveBase.empty()) throw std::runtime_error("--mode improve needs --improve-base");
+        return std::make_unique<ImprovedPolicy>(loadPolicy(improveBase, "softmax"), net, tau);
+    }
     const NetMode m = mode == "softmax" ? NetMode::Softmax
                     : mode == "argmax"  ? NetMode::Argmax
                                         : NetMode::RegretMatching;
@@ -95,7 +106,7 @@ int main(int argc, char** argv) {
     try {
         // --learner i --opp-policy F: player i follows --policy, the others
         // the fixed --opp-policy (best-response training / matches).
-        const auto own = loadPolicy(a.policy, a.mode);
+        const auto own = loadPolicy(a.policy, a.mode, a.improveBase, a.tau);
         std::unique_ptr<PolicyView> opp;
         std::unique_ptr<PolicyView> mixed;
         const PolicyView* policy = own.get();

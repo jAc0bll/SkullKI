@@ -528,3 +528,40 @@ TEST_CASE("Policy samples can be thinned", "[deep][gen]") {
     REQUIRE(frac > 0.4);
     REQUIRE(frac < 0.6);
 }
+
+TEST_CASE("ImprovedPolicy: follows the base unless confidently better", "[deep][improve]") {
+    // Advantage net: no hidden layer, zero weights, bias +10 for "bid 1",
+    // so the advantage of bid 1 is 10 points everywhere.
+    const std::string path = "test_adv_tmp.bin";
+    {
+        std::ofstream f(path, std::ios::binary);
+        f.write("SKMLP001", 8);
+        const std::uint32_t n = 1, in = INFO_DIM, out = ACT_DIM;
+        f.write(reinterpret_cast<const char*>(&n), 4);
+        f.write(reinterpret_cast<const char*>(&in), 4);
+        f.write(reinterpret_cast<const char*>(&out), 4);
+        std::vector<float> w(static_cast<std::size_t>(in) * out, 0.0f), b(out, 0.0f);
+        b[1] = 10.0f;   // action index 1 = bid 1
+        f.write(reinterpret_cast<const char*>(w.data()), w.size() * 4);
+        f.write(reinterpret_cast<const char*>(b.data()), b.size() * 4);
+    }
+    auto adv = std::make_shared<const MLP>(MLP::load(path));
+    std::remove(path.c_str());
+
+    std::array<CardSet, N_PLAYERS> hands{};
+    hands[0].add(makeColored(Suit::Yellow, 3));
+    RoundState rs = makeRoundState(1, hands);
+    ActionList al;
+    legalKindActions(rs.s, al);   // bid 0, bid 1
+    double pr[2];
+
+    ImprovedPolicy confident(std::make_unique<UniformPolicy>(), adv, 5.0);
+    confident.probs(rs, 0, al, pr);
+    REQUIRE(pr[0] == 0.0);
+    REQUIRE(pr[1] == 1.0);
+
+    ImprovedPolicy cautious(std::make_unique<UniformPolicy>(), adv, 20.0);
+    cautious.probs(rs, 0, al, pr);
+    REQUIRE(pr[0] == Catch::Approx(0.5));   // below threshold: the base (uniform)
+    REQUIRE(pr[1] == Catch::Approx(0.5));
+}

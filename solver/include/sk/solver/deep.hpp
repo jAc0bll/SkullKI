@@ -79,6 +79,24 @@ struct GenConfig {
 };
 
 // Player `learner` follows `mine`, everybody else follows `others`.
+// Confident one-step improvement of a base strategy: follow `base`, except
+// where the advantage network (trained on advantages relative to `base`,
+// in points) rates some legal action more than `tau` points above the
+// base's average; then play that action. tau = +inf reproduces `base`, so
+// an exploiter built this way cannot fall below the strategy it improves
+// on; a finite tau ignores advantages that are within the estimation noise.
+class ImprovedPolicy final : public PolicyView {
+public:
+    ImprovedPolicy(std::unique_ptr<PolicyView> base, std::shared_ptr<const MLP> adv, double tau)
+        : base_(std::move(base)), adv_(std::move(adv)), tau_(tau) {}
+    void probs(const RoundState& rs, int player, const ActionList& legal,
+               double* out) const override;
+private:
+    std::unique_ptr<PolicyView> base_;
+    std::shared_ptr<const MLP> adv_;
+    double tau_;
+};
+
 class MixedPolicy final : public PolicyView {
 public:
     MixedPolicy(const PolicyView& mine, const PolicyView& others, int learner)

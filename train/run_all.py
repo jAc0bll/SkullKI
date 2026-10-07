@@ -125,6 +125,8 @@ def exploit_gain(ed: Path) -> dict | None:
     br, mode = best
     gain = float(br.group(1)) - float(base.group(1))
     err = (float(br.group(2)) ** 2 + float(base.group(2)) ** 2) ** 0.5
+    if "tau" in evals[-1]:   # confident one-step improvement (--br-method improve)
+        mode = f"improve, tau={evals[-1]['tau']}"
     return {"gain": round(gain, 4), "stderr": round(err, 4), "mode": mode,
             "exploiter_utility": float(br.group(1)), "baseline_utility": float(base.group(1))}
 
@@ -189,7 +191,7 @@ def main() -> None:
                        dir=str(ed))
                 run_step([py, str(DEEP), "--round", str(r), "--workdir", str(ed), "--resume",
                           "--br-vs", str(td / "avg.bin"), "--br-player", str(seat),
-                          "--eval-every", str(exploit_cfg["iters"]),
+                          "--eval-every", "5",
                           "--label", f"round {r} exploiter seat {seat + 1}"]
                          + to_flags(exploit_cfg), logfile)
             cleanup(ed)
