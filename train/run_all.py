@@ -143,6 +143,10 @@ def main() -> None:
                     help="multiply games/trajectories per iteration (0 = auto from CPU cores: "
                          "1 per 48 threads, max 4). More data = less noise; generation is "
                          "cheap on many cores")
+    ap.add_argument("--config-round", type=int, default=0,
+                    help="train every selected round with the settings (net size, iterations) "
+                         "of this round, e.g. --rounds 3 --config-round 4 retrains round 3 "
+                         "with the bigger round-4 settings")
     args = ap.parse_args()
 
     wd = args.workdir.resolve()
@@ -164,7 +168,7 @@ def main() -> None:
         print(f"\n=== {msg} ===", flush=True)
 
     for r in rounds:
-        train_cfg, exploit_cfg = round_config(r, args.profile)
+        train_cfg, exploit_cfg = round_config(args.config_round or r, args.profile)
         for cfg in (train_cfg, exploit_cfg):
             cfg["value_games"] *= scale
             cfg["regret_traj"] *= scale
