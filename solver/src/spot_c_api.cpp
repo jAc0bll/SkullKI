@@ -3,11 +3,13 @@
 //
 //   sk_load(round, path)  load the round's average-strategy net from a file
 //   sk_spot(text)         spotQuery() on "round=.. me=.. hand=.. bids=.. play=.."
-//                         or spotDirect() on "mode=direct ...", with the
+//                         or spotDirect() on "mode=direct ...", or a full game
+//                         ("game new|view|act|bot|next|drop ...", session.hpp), with the
 //                         loaded net of that round; returns JSON (valid until
 //                         the next call)
 
 #include "sk/solver/spot_c_api.h"
+#include "sk/solver/session.hpp"
 #include "sk/solver/spot.hpp"
 
 #include <array>
@@ -40,7 +42,11 @@ int sk_load(int round, const char* path) {
 const char* sk_spot(const char* text) {
     const std::string t = text;
     std::string err;
-    if (t.rfind("mode=direct", 0) == 0) {
+    if (t.rfind("game ", 0) == 0) {
+        std::array<const MLP*, sk::MAX_ROUND + 1> view{};
+        for (int r = 0; r <= sk::MAX_ROUND; ++r) view[r] = nets[r].get();
+        answer = gameCommand(t, view);
+    } else if (t.rfind("mode=direct", 0) == 0) {
         DirectInput in;
         answer = parseDirect(t, in, err) ? spotDirect(in, netFor(in.round))
                                          : "{\"ok\":false,\"error\":\"" + err + "\"}";

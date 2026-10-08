@@ -789,3 +789,75 @@ TEST_CASE("Spot direct: mid-round entry gives the same strategy as the full game
     bad.won[0] = 1;
     REQUIRE(spotDirect(bad, nullptr).find("4 Karten als gespielt") != std::string::npos);
 }
+
+#include "sk/solver/session.hpp"
+
+namespace {
+std::string field(const std::string& json, const std::string& key) {
+    const auto i = json.find("\"" + key + "\":");
+    if (i == std::string::npos) return "";
+    std::size_t j = i + key.size() + 3, depth = 0, k = j;
+    for (; k < json.size(); ++k) {
+        const char c = json[k];
+        if (c == '[' || c == '{') ++depth;
+        else if (c == ']' || c == '}') { if (depth == 0) break; --depth; }
+        else if (c == ',' && depth == 0) break;
+    }
+    return json.substr(j, k - j);
+}
+}
+
+TEST_CASE("Game session: bots play 10 rounds, views hide what they must", "[deep][session]") {
+    const auto net = randomPolicyNet(3);
+    std::array<const MLP*, 11> nets{};
+    for (int r = 1; r <= MAX_ROUND; ++r) nets[r] = net.get();
+    for (int seed = 1; seed <= 6; ++seed) {
+        const std::string created = gameCommand("game new seed=" + std::to_string(seed) + " start=" + std::to_string(seed % 4), nets);
+        REQUIRE(created.rfind("{\"ok\":true", 0) == 0);
+        const std::string id = field(created, "id");
+        int steps = 0, rounds = 0;
+        for (;;) {
+            const std::string v0 = gameCommand("game view id=" + id + " seat=0", nets);
+            INFO(v0);
+            const std::string phase = field(v0, "phase");
+            if (phase == "\"gameOver\"") break;
+            if (phase == "\"roundEnd\"") {
+                ++rounds;
+                REQUIRE(gameCommand("game next id=" + id, nets) == "{\"ok\":true}");
+                continue;
+            }
+            if (phase == "\"bidding\"") {
+                // others' bids stay hidden from seat 0 until all are in
+                const std::string bids = field(v0, "bids");
+                REQUIRE(bids.substr(bids.find(',')) == ",-1,-1,-1]");
+            }
+            const std::string toAct = field(v0, "toAct");
+            REQUIRE(toAct.size() > 2);
+            const int seat = toAct[1] - '0';
+            // a seat that is not to act is refused
+            if (phase == "\"playing\"")
+                REQUIRE(gameCommand("game bot id=" + id + " seat=" + std::to_string((seat + 1) % 4), nets).find("nicht dran") != std::string::npos);
+            const std::string hint = gameCommand("game hint id=" + id + " seat=" + std::to_string(seat), nets);
+            REQUIRE(hint.rfind("{\"ok\":true,\"options\":[{", 0) == 0);
+            if (seat == 0 && steps % 3 == 0) {
+                // seat 0 plays as a human: first legal action
+                const std::string legal = field(v0, "legal");
+                const auto a = legal.find("\"a\":\"");
+                const std::string act = legal.substr(a + 5, legal.find('"', a + 5) - a - 5);
+                REQUIRE(gameCommand("game act id=" + id + " seat=0 a=" + act, nets).rfind("{\"ok\":true", 0) == 0);
+            } else {
+                REQUIRE(gameCommand("game bot id=" + id + " seat=" + std::to_string(seat), nets).rfind("{\"ok\":true", 0) == 0);
+            }
+            ++steps;
+            REQUIRE(steps < 2000);
+        }
+        REQUIRE(rounds == 9);   // the 10th round ends in gameOver
+        const std::string end = gameCommand("game view id=" + id + " seat=1", nets);
+        const std::string results = field(end, "results");
+        REQUIRE(std::count(results.begin(), results.end(), '{') == 10);
+        REQUIRE(field(end, "review") == "[]");     // seat 1 never acted as a human
+        REQUIRE(field(gameCommand("game view id=" + id + " seat=0", nets), "review").size() > 10);
+        REQUIRE(gameCommand("game drop id=" + id, nets) == "{\"ok\":true}");
+    }
+    REQUIRE(gameCommand("game act id=999 seat=0 a=bid:1", nets).find("nicht gefunden") != std::string::npos);
+}

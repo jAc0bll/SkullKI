@@ -473,4 +473,8 @@ std::string spotDirect(const DirectInput& in, const MLP* net) {
     return o.str();
 }
 
+void strategy(const MLP& net, const RoundState& rs, int me, const ActionList& legal, double* out) {
+    policy(net, rs, me, legal, out);
+}
+
 } // namespace sk::solver

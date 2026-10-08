@@ -1,0 +1,16 @@
+{
+  "name": "skullki-server",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "SkullKI multiplayer: rooms over WebSocket, the C++ game engine (WebAssembly) deals and runs the bots",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  }
+}

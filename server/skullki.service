@@ -1,0 +1,19 @@
+# systemd unit for the SkullKI multiplayer server.
+#   sudo cp skullki.service /etc/systemd/system/
+#   sudo systemctl enable --now skullki
+# Adjust User and WorkingDirectory if the repo is not in /home/jacob/SkullKI.
+[Unit]
+Description=SkullKI multiplayer server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=jacob
+WorkingDirectory=/home/jacob/SkullKI/server
+Environment=PORT=8787
+ExecStart=/usr/bin/env node index.mjs
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

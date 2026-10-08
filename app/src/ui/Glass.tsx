@@ -44,20 +44,24 @@ export function Glass({
     );
   }
   return (
-    <View style={[{ borderRadius: radius, overflow: 'hidden' }, style]}>
-      <BlurView intensity={Platform.OS === 'web' ? 28 : 40} tint="dark" style={StyleSheet.absoluteFill} />
-      {tint && <View style={[StyleSheet.absoluteFill, { backgroundColor: tint, opacity: 0.55 }]} />}
+    // zIndex 0 makes this its own stacking context; the layers sit at -1 so
+    // they never cover the content (on web, inputs and svgs are not
+    // positioned and would otherwise end up below the blur).
+    <View style={[{ borderRadius: radius, overflow: 'hidden', zIndex: 0 }, style]}>
+      <BlurView intensity={Platform.OS === 'web' ? 28 : 40} tint="dark" style={[StyleSheet.absoluteFill, BEHIND]} />
+      {tint && <View style={[StyleSheet.absoluteFill, BEHIND, { backgroundColor: tint, opacity: 0.55 }]} />}
       {/* specular rim: light from above */}
       <LinearGradient
         pointerEvents="none"
         colors={['rgba(255,255,255,0.20)', 'rgba(255,255,255,0.04)', 'rgba(255,255,255,0.0)']}
         locations={[0, 0.45, 1]}
-        style={StyleSheet.absoluteFill}
+        style={[StyleSheet.absoluteFill, BEHIND]}
       />
       <View
         pointerEvents="none"
         style={[
           StyleSheet.absoluteFill,
+          BEHIND,
           {
             borderRadius: radius,
             borderWidth: StyleSheet.hairlineWidth * 2,
@@ -70,6 +74,8 @@ export function Glass({
     </View>
   );
 }
+
+const BEHIND = { zIndex: -1 } as const;
 
 /** Groups glass shapes so they melt into each other when close (iOS 26). */
 export function GlassGroup({ children, spacing = 10, style }: { children: ReactNode; spacing?: number; style?: StyleProp<ViewStyle> }) {

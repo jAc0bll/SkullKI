@@ -64,6 +64,10 @@ bool parseSpot(const std::string& text, SpotInput& in, std::string& error);
 // {"ok":false,"error":"..."}.
 std::string spotQuery(const SpotInput& in, const MLP* net);
 
+// The strategy's probabilities (softmax over the legal actions' logits) for
+// `me` in `rs`, as NetPolicy with NetMode::Softmax.
+void strategy(const MLP& net, const RoundState& rs, int me, const ActionList& legal, double* out);
+
 // "mode=direct round=.. me=.. hand=.. bids=.. won=.. played=.. trick=.. tigress=.. voids=.."
 bool parseDirect(const std::string& text, DirectInput& in, std::string& error);
 

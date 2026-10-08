@@ -21,6 +21,8 @@ export default function RootLayout() {
           <StatusBar style="light" />
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="bot" options={{ presentation: 'fullScreenModal', gestureEnabled: false }} />
+            <Stack.Screen name="online" options={{ presentation: 'fullScreenModal', gestureEnabled: false }} />
             {/* native sheet: Liquid Glass on iOS 26 */}
             <Stack.Screen
               name="picker"

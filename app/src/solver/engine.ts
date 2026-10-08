@@ -104,3 +104,9 @@ export const fullText = (q: FullSpot) =>
 export const directText = (q: DirectSpot) =>
   `mode=direct round=${q.round} me=${q.me} hand=${q.hand.join(',')} bids=${q.bids.join(',')} won=${q.won.join(',')} ` +
   `played=${q.played.join(',')} trick=${q.trick.join(',')} tigress=${q.tigress} voids=${q.voids.join(',')}`;
+
+/** Any solver command (e.g. "game view id=1 seat=0"), raw JSON text. */
+export function rawQuery(text: string): string {
+  if (!SkSolver) return JSON.stringify({ ok: false, error: 'Solver nicht verfügbar' });
+  return SkSolver.query(text);
+}

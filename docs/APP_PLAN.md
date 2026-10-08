@@ -39,12 +39,19 @@ npm --prefix app run web
 C++ geändert? `bash scripts/build_wasm.sh` (Emscripten in `C:\Users\jaxob\emsdk`),
 danach `npm --prefix app run check-wasm` (vergleicht mit dem nativen Solver).
 
+## Spielen
+
+- **Gegen die KI** (`app/src/app/bot.tsx`): offline auf dem iPhone, du + 3 Bots,
+  die zufällig nach den GTO-Wahrscheinlichkeiten spielen. Glühbirne = GTO-Tipps,
+  nach jeder Runde Auswertung, wo du deutlich von GTO abgewichen bist.
+- **Mit Freunden** (`app/src/app/online.tsx` + `server/`): Räume mit 4-Buchstaben-
+  Code über deinen Server, freie Plätze spielt die KI, Wiederverbinden nach
+  Funkloch. Einrichtung: `docs/MULTIPLAYER_SERVER.md`.
+- Beide nutzen dieselbe C++-Spiel-Engine (`solver/src/session.cpp`): in der App
+  nativ, auf dem Server als WebAssembly.
+
 ## Nächste Schritte
 
-1. ✅ Solver-App (beide Modi), iPhone-Build in der Cloud
-2. **Gegen die KI**: offline, 3 Bots spielen nach den GTO-Wahrscheinlichkeiten,
-   10 Runden, danach Analyse, wo du von GTO abgewichen bist
-3. **Multiplayer** über deinen Linux-Server (nicht P2P: Bei P2P kennt das
-   mischende Handy alle Karten). Räume mit Code, freie Plätze übernimmt die KI
-4. Feinschliff: Sounds, Spielverlauf speichern, Android-Build
-5. Später: 2-Spieler-Modus (eigenes Training), Gewinnwahrscheinlichkeit statt Punkte
+1. ✅ Solver-App, ✅ Bot-Modus, ✅ Multiplayer (Server muss noch auf deinen Linux-Server)
+2. Feinschliff: Sounds, Spielverlauf/Statistik speichern, Android-Build
+3. Später: 2-Spieler-Modus (eigenes Training), Gewinnwahrscheinlichkeit statt Punkte

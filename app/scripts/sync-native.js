@@ -9,7 +9,7 @@ const dst = path.resolve(__dirname, '..', 'modules', 'sk-solver', 'ios', 'cpp');
 const files = [
   'engine/src/game.cpp', 'engine/src/rules.cpp', 'engine/src/scoring.cpp',
   'solver/src/round.cpp', 'solver/src/encoding.cpp', 'solver/src/mlp.cpp',
-  'solver/src/spot.cpp', 'solver/src/spot_c_api.cpp',
+  'solver/src/spot.cpp', 'solver/src/spot_c_api.cpp', 'solver/src/session.cpp',
 ];
 const headerDirs = ['engine/include/sk', 'solver/include/sk/solver'];
 
