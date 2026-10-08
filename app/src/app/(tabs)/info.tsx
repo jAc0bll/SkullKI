@@ -1,6 +1,7 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Backdrop } from '@/ui/Backdrop';
+import { STYLES } from '@/account/avatars';
 import { Panel } from '@/ui/controls';
 import { C, font, type } from '@/ui/theme';
 
@@ -44,6 +45,15 @@ export default function InfoScreen() {
           <Text style={type.callout}>
             Die KI optimiert die Punkte jeder Runde. Dass man bei großem Rückstand in Runde 10 mehr riskieren sollte, weiß sie noch nicht. Gerechnet wird komplett auf deinem iPhone, ohne Internet.
           </Text>
+        </Panel>
+        <Panel style={{ gap: 6 }}>
+          <Text style={type.title}>Avatare</Text>
+          <Text style={type.footnote}>Erzeugt mit DiceBear (github.com/dicebear/dicebear, MIT). Stile:</Text>
+          {STYLES.map((s) => (
+            <Text key={s.id} style={type.footnote}>
+              · {s.credit}
+            </Text>
+          ))}
         </Panel>
       </ScrollView>
     </View>

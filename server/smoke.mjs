@@ -25,7 +25,7 @@ function client(name) {
   return new Promise((res) => ws.on('open', () => res(c)));
 }
 const a = await client('Alice');
-a.send({ t: 'create', name: 'Alice' });
+a.send({ t: 'create', name: 'Alice', account: process.env.ACCOUNT });
 await new Promise((r) => setTimeout(r, 200));
 const b = await client('Bob');
 b.send({ t: 'join', code: a.code, name: 'Bob' });

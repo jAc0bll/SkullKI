@@ -14,6 +14,10 @@ export default function TabLayout() {
         <NativeTabs.Trigger.Label>Spielen</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf={{ default: 'gamecontroller', selected: 'gamecontroller.fill' }} md="sports_esports" />
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="profile">
+        <NativeTabs.Trigger.Label>Profil</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf={{ default: 'person.crop.circle', selected: 'person.crop.circle.fill' }} md="account_circle" />
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="info">
         <NativeTabs.Trigger.Label>Info</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf={{ default: 'info.circle', selected: 'info.circle.fill' }} md="info" />

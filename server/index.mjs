@@ -27,6 +27,7 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { WebSocketServer } from 'ws';
+import * as users from './users.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8787);
@@ -82,7 +83,7 @@ class Room {
       seat,
       host: seat === 0,
       started: this.started,
-      players: this.players.map((p) => ({ name: p.name, bot: p.bot, online: p.bot || p.online })),
+      players: this.players.map((p) => ({ name: p.name, bot: p.bot, online: p.bot || p.online, avatar: p.avatar ?? null })),
       ready: [...this.ready],
     };
   }
@@ -97,7 +98,7 @@ class Room {
     while (this.players.length < 4) {
       const used = new Set(this.players.map((p) => p.name));
       const name = BOT_NAMES.find((n) => !used.has(n));
-      this.players.push({ name, bot: true, online: true });
+      this.players.push({ name, bot: true, online: true, avatar: { style: 'bottts', seed: name } });
     }
     this.gameId = game(`new seed=${randomInt(2 ** 31)} start=${randomInt(4)}`).id;
     this.afterChange();
@@ -113,7 +114,10 @@ class Room {
       this.nextTimer = setTimeout(() => this.nextRound(), 45_000); // nobody waits forever
       return;
     }
-    if (v.phase === 'gameOver') return;
+    if (v.phase === 'gameOver') {
+      this.recordResults();
+      return;
+    }
     const due = v.toAct.filter((s) => this.players[s].bot || !this.players[s].online);
     if (!due.length) return;
     const absentOnly = due.every((s) => !this.players[s].bot);
@@ -123,6 +127,16 @@ class Room {
       for (const s of v.phase === 'bidding' ? due : due.slice(0, 1)) game(`bot id=${this.gameId} seat=${s}`);
       this.afterChange();
     }, delay);
+  }
+  recordResults() {
+    if (this.recorded) return;
+    this.recorded = true;
+    const names = this.players.map((p) => p.name);
+    this.players.forEach((p, seat) => {
+      if (p.bot || !p.account) return;
+      const view = game(`view id=${this.gameId} seat=${seat}`);
+      users.recordGame(p.account, { mode: 'online', ...users.summarize(view, seat), players: names });
+    });
   }
   nextRound() {
     clearTimeout(this.nextTimer);
@@ -140,10 +154,20 @@ class Room {
   }
 }
 
-function addPlayer(room, name, ws) {
+function addPlayer(room, msg, ws) {
   const token = randomBytes(16).toString('hex');
   const seat = room.players.length;
-  room.players.push({ name: String(name || 'Spieler').slice(0, 20), token, ws, bot: false, online: true });
+  // a logged-in player (msg.account) keeps name and avatar from the profile
+  const account = msg.account ? users.getUser(msg.account) : null;
+  room.players.push({
+    name: account?.name ?? String(msg.name || 'Spieler').slice(0, 20),
+    account: account?.name ?? null,
+    avatar: account?.avatar ?? users.cleanAvatar(msg.avatar),
+    token,
+    ws,
+    bot: false,
+    online: true,
+  });
   tokens.set(token, { room, seat });
   ws.ctx = { room, seat };
   ws.send(JSON.stringify({ t: 'joined', code: room.code, token, seat }));
@@ -170,7 +194,7 @@ function handle(ws, msg) {
     case 'create': {
       const room = new Room(newCode());
       rooms.set(room.code, room);
-      addPlayer(room, msg.name, ws);
+      addPlayer(room, msg, ws);
       return;
     }
     case 'join': {
@@ -178,7 +202,7 @@ function handle(ws, msg) {
       if (!room) return err('Raum nicht gefunden');
       if (room.started) return err('Das Spiel in diesem Raum läuft schon');
       if (room.players.length >= 4) return err('Der Raum ist voll');
-      addPlayer(room, msg.name, ws);
+      addPlayer(room, msg, ws);
       return;
     }
   }
@@ -232,8 +256,64 @@ const TYPES = {
   '.json': 'application/json', '.png': 'image/png', '.ico': 'image/x-icon', '.svg': 'image/svg+xml',
   '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.bin': 'application/octet-stream',
 };
+// ---- accounts API (JSON) -----------------------------------------------------
+//   POST /api/login {name, avatar?}        -> user (new names are created)
+//   GET  /api/users/:name                  -> user
+//   POST /api/users/:name/avatar {avatar}  -> user
+//   POST /api/users/:name/games {mode:'bot', score, rank, rounds, bidsHit, gtoAgree, gtoTotal, players}
+//   GET  /api/leaderboard
+function api(req, res, url) {
+  const send = (code, obj) => {
+    res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*' });
+    res.end(JSON.stringify(obj));
+  };
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'GET, POST, OPTIONS',
+      'access-control-allow-headers': 'content-type',
+    });
+    return res.end();
+  }
+  let body = '';
+  req.on('data', (c) => {
+    body += c;
+    if (body.length > 20_000) req.destroy();
+  });
+  req.on('end', () => {
+    let data = {};
+    try {
+      data = body ? JSON.parse(body) : {};
+    } catch {
+      return send(400, { error: 'Ungültige Daten' });
+    }
+    const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent); // ['api', ...]
+    if (parts[1] === 'login' && req.method === 'POST') {
+      const r = users.login(data.name, data.avatar);
+      return r.error ? send(400, { error: r.error }) : send(200, users.publicUser(r.user));
+    }
+    if (parts[1] === 'leaderboard') return send(200, users.leaderboard());
+    if (parts[1] === 'users' && parts[2]) {
+      if (!parts[3] && req.method === 'GET') {
+        const u = users.getUser(parts[2]);
+        return u ? send(200, users.publicUser(u)) : send(404, { error: 'Unbekannter Name' });
+      }
+      if (parts[3] === 'avatar' && req.method === 'POST') {
+        const u = users.setAvatar(parts[2], data.avatar);
+        return u ? send(200, users.publicUser(u)) : send(400, { error: 'Avatar ungültig' });
+      }
+      if (parts[3] === 'games' && req.method === 'POST') {
+        const u = users.recordGame(parts[2], { ...data, mode: 'bot' });
+        return u ? send(200, users.publicUser(u)) : send(404, { error: 'Unbekannter Name' });
+      }
+    }
+    send(404, { error: 'Nicht gefunden' });
+  });
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://x');
+  if (url.pathname.startsWith('/api/')) return api(req, res, url);
   if (url.pathname === '/health' || !existsSync(DIST)) {
     res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
     res.end(`SkullKI server ok · ${rooms.size} Räume\n`);

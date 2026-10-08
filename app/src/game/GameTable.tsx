@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Platform, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown, FadeInUp, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Avatar } from '@/account/Avatar';
 import { cardName, handOrder } from '@/solver/cards';
 import { Backdrop } from '@/ui/Backdrop';
 import { GlassButton, Icon, tick } from '@/ui/controls';
@@ -90,8 +91,9 @@ function Scores({ view, players }: { view: GameView; players: Player[] }) {
     <GlassGroup spacing={6} style={styles.scores}>
       {[0, 1, 2, 3].map((s) => (
         <Glass key={s} radius={14} tint={s === view.seat ? 'rgba(10,132,255,0.45)' : undefined} style={styles.scoreBox}>
+          <Avatar avatar={players[s]?.avatar} size={26} />
           <Text style={styles.scoreName} numberOfLines={1}>
-            {players[s]?.name ?? `Sitz ${s + 1}`}
+            {s === view.seat ? 'Du' : players[s]?.name ?? `Sitz ${s + 1}`}
           </Text>
           <Text style={styles.scoreNum}>{view.scores[s]}</Text>
         </Glass>
@@ -118,19 +120,22 @@ function GameBoard({ view, players }: { view: GameView; players: Player[] }) {
         const hit = view.won[s] === view.bids[s];
         return (
           <Glass key={s} radius={18} tint={turn ? 'rgba(10,132,255,0.5)' : undefined} style={[styles.seat, seatPos[PLACE[r]], turn && styles.seatTurn]}>
-            <Text style={styles.seatName} numberOfLines={1}>
-              {name(s)}
-              {players[s]?.online === false && <Text style={{ color: C.bad }}> ●</Text>}
-            </Text>
-            {view.phase === 'bidding' ? (
-              <Text style={styles.seatSub}>{view.bidIn[s] ? (bidKnown ? `Ansage ${view.bids[s]}` : 'angesagt ✓') : '…'}</Text>
-            ) : (
-              <Text style={[styles.seatScore, hit && { color: C.good }, view.won[s] > view.bids[s] && { color: C.bad }]}>
-                {view.won[s]}
-                <Text style={{ color: C.text3 }}>/{view.bids[s]}</Text>
+            <Avatar avatar={players[s]?.avatar} size={30} ring={turn ? C.accent : 'rgba(255,255,255,0.25)'} />
+            <View style={{ alignItems: 'flex-start', flexShrink: 1 }}>
+              <Text style={styles.seatName} numberOfLines={1}>
+                {name(s)}
+                {players[s]?.online === false && <Text style={{ color: C.bad }}> ●</Text>}
               </Text>
-            )}
-            {s === view.start && <Text style={styles.startTag}>beginnt</Text>}
+              {view.phase === 'bidding' ? (
+                <Text style={styles.seatSub}>{view.bidIn[s] ? (bidKnown ? `Ansage ${view.bids[s]}` : 'angesagt ✓') : '…'}</Text>
+              ) : (
+                <Text style={[styles.seatScore, hit && { color: C.good }, view.won[s] > view.bids[s] && { color: C.bad }]}>
+                  {view.won[s]}
+                  <Text style={{ color: C.text3 }}>/{view.bids[s]}</Text>
+                </Text>
+              )}
+              {s === view.start && <Text style={styles.startTag}>beginnt</Text>}
+            </View>
           </Glass>
         );
       })}
@@ -320,11 +325,11 @@ const seatPos = StyleSheet.create({
 const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 12 },
   scores: { flexDirection: 'row', gap: 6, paddingHorizontal: 16, marginTop: 12 },
-  scoreBox: { flex: 1, alignItems: 'center', paddingVertical: 6 },
+  scoreBox: { flex: 1, alignItems: 'center', paddingVertical: 6, gap: 2 },
   scoreName: { fontSize: 11, fontWeight: '600', color: C.text2, fontFamily: font.family },
   scoreNum: { fontSize: 17, fontWeight: '800', color: C.text, fontFamily: font.family, ...font.tabular },
   board: { alignSelf: 'center', marginTop: 8 },
-  seat: { position: 'absolute', minWidth: 92, maxWidth: 130, paddingHorizontal: 12, paddingVertical: 7, alignItems: 'center', zIndex: 1 },
+  seat: { position: 'absolute', maxWidth: 150, paddingLeft: 6, paddingRight: 12, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 1 },
   seatTurn: { borderWidth: 1.5, borderColor: C.accent },
   seatName: { fontSize: 13, fontWeight: '700', color: C.text, fontFamily: font.family },
   seatSub: { fontSize: 12, fontWeight: '600', color: C.text2, fontFamily: font.family },

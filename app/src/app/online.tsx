@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import { ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Avatar } from '@/account/Avatar';
+import { useAccount } from '@/account/store';
 import { GameTable } from '@/game/GameTable';
 import { DEFAULT_SERVER, loadPrefs, sameOrigin, useOnlineGame } from '@/game/useOnlineGame';
 import { Backdrop } from '@/ui/Backdrop';
@@ -13,6 +15,8 @@ import { C, font, type } from '@/ui/theme';
 export default function Online() {
   const insets = useSafeAreaInsets();
   const net = useOnlineGame();
+  const { user } = useAccount();
+  const me = user ? { account: user.name, avatar: user.avatar } : undefined;
   const { resume } = net;
   const [name, setName] = useState('');
   const [server, setServer] = useState(DEFAULT_SERVER);
@@ -21,7 +25,7 @@ export default function Online() {
 
   useEffect(() => {
     loadPrefs().then((p) => {
-      setName(p.name);
+      setName(user?.name ?? p.name);
       setServer(p.server);
       resume(p.server);
     });
@@ -57,6 +61,12 @@ export default function Online() {
           <>
             <Panel style={{ gap: 12 }}>
               <Text style={styles.label}>Dein Name</Text>
+              {user ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <Avatar avatar={user.avatar} size={44} />
+                  <Text style={type.headline}>{user.name}</Text>
+                </View>
+              ) : (
               <Glass radius={16} style={styles.inputWrap}>
                 <TextInput
                   value={name}
@@ -68,7 +78,9 @@ export default function Online() {
                   autoCorrect={false}
                 />
               </Glass>
-              <GlassButton prominent label="Raum erstellen" disabled={!canGo} onPress={() => net.create(server, name.trim())} />
+              )}
+              {!user && <Text style={type.footnote}>Tipp: Im Profil anmelden, dann zählen deine Spiele für die Statistik.</Text>}
+              <GlassButton prominent label="Raum erstellen" disabled={!canGo} onPress={() => net.create(server, name.trim(), me)} />
             </Panel>
             <Panel style={{ gap: 12 }}>
               <Text style={styles.label}>Raum-Code von einem Freund</Text>
@@ -85,7 +97,7 @@ export default function Online() {
                     autoCorrect={false}
                   />
                 </Glass>
-                <GlassButton label="Beitreten" disabled={!canGo || code.length !== 4} onPress={() => net.join(server, name.trim(), code)} />
+                <GlassButton label="Beitreten" disabled={!canGo || code.length !== 4} onPress={() => net.join(server, name.trim(), code, me)} />
               </View>
             </Panel>
             {!sameOrigin && (
@@ -127,6 +139,7 @@ export default function Online() {
                 const p = room.players[s];
                 return (
                   <View key={s} style={[styles.seatRow, s === room.seat && styles.me]}>
+                    {p && <Avatar avatar={p.avatar} size={32} />}
                     <Text style={[type.headline, { flex: 1, color: p ? C.text : C.text3 }]}>
                       {p ? p.name + (s === room.seat ? ' (du)' : '') : 'frei, spielt die KI'}
                     </Text>
@@ -157,6 +170,7 @@ const styles = StyleSheet.create({
   bigCode: { fontSize: 52, fontWeight: '800', letterSpacing: 10, color: C.text, fontFamily: font.family },
   seatRow: {
     flexDirection: 'row',
+    gap: 10,
     alignItems: 'center',
     paddingVertical: 10,
     paddingHorizontal: 12,

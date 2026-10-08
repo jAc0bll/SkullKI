@@ -16,6 +16,9 @@ export default function TabLayout() {
           <TabTrigger name="play" href="/play" asChild>
             <Tab label="Spielen" glyph="●" />
           </TabTrigger>
+          <TabTrigger name="profile" href="/profile" asChild>
+            <Tab label="Profil" glyph="◉" />
+          </TabTrigger>
           <TabTrigger name="info" href="/info" asChild>
             <Tab label="Info" glyph="ⓘ" />
           </TabTrigger>

@@ -1,3 +1,5 @@
+import type { AvatarSpec } from '@/account/avatars';
+
 // What one seat sees of a game (solver/src/session.cpp, "game view").
 export interface GameTrick {
   leader: number;
@@ -50,6 +52,7 @@ export interface Player {
   name: string;
   bot: boolean;
   online?: boolean;
+  avatar?: AvatarSpec | null;
 }
 
 /** The game table drives either a local bot game or an online room. */

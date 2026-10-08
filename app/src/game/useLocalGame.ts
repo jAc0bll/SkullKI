@@ -2,6 +2,7 @@
 // C++ game session on the device; bots move with a short delay so you can
 // follow the table.
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { botAvatar, type AvatarSpec } from '@/account/avatars';
 import { loadRound, rawQuery } from '@/solver/engine';
 import type { GameController, GameView, Player } from './types';
 
@@ -10,13 +11,23 @@ const ME = 0;
 
 const call = (cmd: string) => JSON.parse(rawQuery(cmd));
 
-export function useLocalGame(): GameController & { restart: () => void } {
+export function useLocalGame(me: { name: string; avatar: AvatarSpec | null }, onGameOver?: (v: GameView, names: string[]) => void): GameController & { restart: () => void } {
   const [id, setId] = useState<number | null>(null);
   const [view, setView] = useState<GameView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const players: Player[] = [{ name: 'Du', bot: false }, ...BOT_NAMES.map((name) => ({ name, bot: true }))];
+  const players: Player[] = [
+    { name: me.name, bot: false, avatar: me.avatar },
+    ...BOT_NAMES.map((name) => ({ name, bot: true, avatar: botAvatar(name) })),
+  ];
+  const reported = useRef<number | null>(null);
+  useEffect(() => {
+    if (view?.phase === 'gameOver' && id !== null && reported.current !== id) {
+      reported.current = id;
+      onGameOver?.(view, players.map((p) => p.name));
+    }
+  });
 
   const refresh = useCallback((gid: number) => {
     const v = call(`game view id=${gid} seat=${ME}`);

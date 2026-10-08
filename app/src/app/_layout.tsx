@@ -3,6 +3,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { AccountProvider } from '@/account/store';
 import { SolverProvider } from '@/solver/store';
 import { C } from '@/ui/theme';
 
@@ -17,6 +18,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: C.bg }}>
       <ThemeProvider value={theme}>
+        <AccountProvider>
         <SolverProvider>
           <StatusBar style="light" />
           <Stack screenOptions={{ headerShown: false }}>
@@ -35,6 +37,7 @@ export default function RootLayout() {
             />
           </Stack>
         </SolverProvider>
+        </AccountProvider>
       </ThemeProvider>
     </GestureHandlerRootView>
   );

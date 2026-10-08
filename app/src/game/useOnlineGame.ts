@@ -2,15 +2,19 @@
 // Reconnects by itself and resumes the seat with a saved token.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import type { AvatarSpec } from '@/account/avatars';
 import type { GameController, GameView, Player } from './types';
 
-// In the browser the app is served by the game server itself: same address.
-export const sameOrigin =
-  Platform.OS === 'web' && typeof location !== 'undefined' && !/:8081$/.test(location.host)
-    ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
-    : null;
-export const DEFAULT_SERVER = sameOrigin ?? 'wss://skullki.schwartihost.com';
+import { FIXED_SERVER, SERVER_WS } from '@/config';
+
+export const sameOrigin = FIXED_SERVER ? SERVER_WS : null;
+export const DEFAULT_SERVER = SERVER_WS;
+
+/** Signed-in player: the server takes name and avatar from the profile. */
+export interface Me {
+  account?: string;
+  avatar?: AvatarSpec | null;
+}
 
 export interface RoomInfo {
   code: string;
@@ -102,18 +106,18 @@ export function useOnlineGame() {
   );
 
   const create = useCallback(
-    async (server: string, name: string) => {
+    async (server: string, name: string, me?: Me) => {
       await AsyncStorage.removeItem(KEY.token);
       await ensure(server, name);
-      send({ t: 'create', name });
+      send({ t: 'create', name, account: me?.account, avatar: me?.avatar });
     },
     [ensure, send],
   );
   const join = useCallback(
-    async (server: string, name: string, code: string) => {
+    async (server: string, name: string, code: string, me?: Me) => {
       await AsyncStorage.removeItem(KEY.token);
       await ensure(server, name);
-      send({ t: 'join', code, name });
+      send({ t: 'join', code, name, account: me?.account, avatar: me?.avatar });
     },
     [ensure, send],
   );
