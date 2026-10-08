@@ -400,6 +400,7 @@ TEST_CASE("Feature abstraction keeps big-round tables small", "[solver][abstract
 
 #include <cstdio>
 #include <fstream>
+#include <sstream>
 
 TEST_CASE("Encoding: action indices are distinct and in range", "[deep][encoding]") {
     std::array<bool, ACT_DIM> seen{};
@@ -613,4 +614,125 @@ TEST_CASE("MLP: optimised forward matches a naive reference", "[deep][mlp]") {
             for (int o = 0; o < outDim; ++o) REQUIRE(y[o] == Catch::Approx(cur[o]).margin(1e-4));
         }
     }
+}
+
+#include "sk/solver/spot.hpp"
+
+namespace {
+
+// The "p" values of a JSON array field ("options" or "bidAdvice") of a spot answer.
+std::vector<double> spotProbs(const std::string& json, const std::string& field) {
+    std::vector<double> out;
+    std::size_t i = json.find("\"" + field + "\":[");
+    if (i == std::string::npos) return out;
+    const std::size_t end = json.find(']', i);
+    while ((i = json.find("\"p\":", i)) != std::string::npos && i < end) {
+        i += 4;
+        out.push_back(std::stod(json.substr(i, 12)));
+    }
+    return out;
+}
+
+std::shared_ptr<const MLP> randomPolicyNet(std::uint64_t seed) {
+    std::mt19937_64 rng(seed);
+    std::uniform_real_distribution<float> uw(-0.3f, 0.3f);
+    const std::string path = "test_spot_net_tmp.bin";
+    {
+        std::ofstream f(path, std::ios::binary);
+        f.write("SKMLP001", 8);
+        const std::vector<std::pair<std::uint32_t, std::uint32_t>> shapes = {{INFO_DIM, 32}, {32, ACT_DIM}};
+        const std::uint32_t n = 2;
+        f.write(reinterpret_cast<const char*>(&n), 4);
+        for (auto [in, out] : shapes) {
+            std::vector<float> w(static_cast<std::size_t>(in) * out), b(out);
+            for (float& v : w) v = uw(rng);
+            for (float& v : b) v = uw(rng);
+            f.write(reinterpret_cast<const char*>(&in), 4);
+            f.write(reinterpret_cast<const char*>(&out), 4);
+            f.write(reinterpret_cast<const char*>(w.data()), w.size() * 4);
+            f.write(reinterpret_cast<const char*>(b.data()), b.size() * 4);
+        }
+    }
+    auto net = std::make_shared<const MLP>(MLP::load(path));
+    std::remove(path.c_str());
+    return net;
+}
+
+} // namespace
+
+TEST_CASE("Spot: rebuilt from public information, same strategy as in the real game", "[deep][spot]") {
+    const auto net = randomPolicyNet(5);
+    const NetPolicy truth(net, NetMode::Softmax);
+    std::mt19937_64 rng(2024);
+    int checked = 0;
+    for (int game = 0; game < 60; ++game) {
+        const int round = 1 + game % MAX_ROUND;
+        const int me = static_cast<int>(rng() % N_PLAYERS);
+        RoundState rs = makeRoundState(round, randomHands(round, rng));
+        SpotInput in;
+        in.round = round;
+        in.me = me;
+        rs.s.hands[me].forEach([&](Card c) { in.hand.push_back(kindOf(c)); });
+        while (!rs.terminal()) {
+            ActionList al;
+            legalKindActions(rs.s, al);
+            if (rs.s.currentPlayer == me) {
+                std::vector<double> want(al.n);
+                truth.probs(rs, me, al, want.data());
+                SpotInput q = in;
+                if (rs.s.phase == Phase::Bidding)
+                    for (int p = 0; p < N_PLAYERS; ++p) q.bids[p] = -1;   // others' bids are hidden
+                q.play.assign(rs.pub.begin(), rs.pub.begin() + rs.pubLen);
+                const std::string json = spotQuery(q, net.get());
+                INFO(json);
+                REQUIRE(json.rfind("{\"ok\":true", 0) == 0);
+                const auto got = spotProbs(json, rs.s.phase == Phase::Bidding ? "bidAdvice" : "options");
+                REQUIRE(static_cast<int>(got.size()) == al.n);
+                for (int a = 0; a < al.n; ++a) REQUIRE(got[a] == Catch::Approx(want[a]).margin(2e-4));
+                ++checked;
+            }
+            std::uniform_int_distribution<int> d(0, al.n - 1);
+            const Action act = al[d(rng)];
+            if (act.type == ActionType::Bid) in.bids[rs.s.currentPlayer] = act.bid;
+            applyRound(rs, act);
+        }
+        // The finished round reports the engine's points.
+        in.play.assign(rs.pub.begin(), rs.pub.begin() + rs.pubLen);
+        const std::string json = spotQuery(in, net.get());
+        INFO(json);
+        REQUIRE(json.find("\"phase\":\"done\"") != std::string::npos);
+        std::ostringstream pts;
+        pts << "\"points\":[" << rs.s.scores[0] << ',' << rs.s.scores[1] << ',' << rs.s.scores[2] << ','
+            << rs.s.scores[3] << ']';
+        REQUIRE(json.find(pts.str()) != std::string::npos);
+    }
+    REQUIRE(checked > 200);
+}
+
+TEST_CASE("Spot: rejects impossible input with a reason", "[deep][spot]") {
+    auto err = [](const std::string& text) {
+        SpotInput in;
+        std::string e;
+        REQUIRE(parseSpot(text, in, e));
+        return spotQuery(in, nullptr);
+    };
+    const int Y = 0, G = 14;   // kind of yellow 1 / green 1
+    // hand size must match the round
+    REQUIRE(err("round=2 me=0 hand=0").find("genau 2 Karten") != std::string::npos);
+    // only one Skull King exists
+    REQUIRE(err("round=2 me=0 hand=60,60").find("Zu oft") != std::string::npos);
+    // cards before all bids
+    REQUIRE(err("round=1 me=0 hand=0 bids=1,-1,0,0 play=0").find("Ansagen") != std::string::npos);
+    // seat 2 discards on yellow, later plays yellow: revoke
+    const std::string revoke = "round=2 me=0 hand=" + std::to_string(Y + 9) + "," + std::to_string(Y + 1) +
+        " bids=1,1,0,0 play=" + std::to_string(Y + 9) + "," + std::to_string(G + 2) + ",56,57";
+    std::string r = err(revoke);
+    REQUIRE(r.find("\"ok\":true") != std::string::npos);   // fine so far
+    // me (seat 1) won with Y10? Mermaid beats colors: seat 4 won and leads next.
+    r = err(revoke + "," + std::to_string(Y + 4));          // seat 4 leads yellow 5
+    REQUIRE(r.find("\"ok\":true") != std::string::npos);
+    r = err(revoke + "," + std::to_string(Y + 4) + "," + std::to_string(Y + 1) + "," + std::to_string(Y + 6));
+    REQUIRE(r.find("Gelb") != std::string::npos);            // seat 2 played green on yellow before
+    // and a player known to be void cannot get that suit offered
+    REQUIRE(err(revoke + "," + std::to_string(Y + 4) + "," + std::to_string(Y + 1)).find("\"value\":" + std::to_string(Y + 6) + ",") == std::string::npos);
 }

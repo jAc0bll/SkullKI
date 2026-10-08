@@ -9,9 +9,13 @@
 // gen-values writes PREFIX_x.npy (uint8, n x HIST_DIM) and PREFIX_y.npy;
 // gen-regrets writes PREFIX_rx/_rmask/_rtarget and PREFIX_px/_pmask/_ptarget.
 // eval prints the exact NashConv (enumerates every deal; round 1 only).
+//
+//   sk_deep spot --policy avg.bin "round=5 me=2 hand=.. bids=.. play=.."
+// prints the spot solver's JSON answer (see sk/solver/spot.hpp).
 
 #include "sk/solver/best_response.hpp"
 #include "sk/solver/deep.hpp"
+#include "sk/solver/spot.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -26,7 +30,7 @@ using namespace sk::solver;
 namespace {
 
 struct Args {
-    std::string cmd, policy, value, out, mode = "rm", oppPolicy, oppMode = "softmax";
+    std::string cmd, spot, policy, value, out, mode = "rm", oppPolicy, oppMode = "softmax";
     int learner = -1;
     std::string improveBase;
     double tau = 0.0;
@@ -65,6 +69,7 @@ Args parse(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--learner"))    a.learner = std::atoi(next());
         else if (!std::strcmp(argv[i], "--improve-base")) a.improveBase = next();
         else if (!std::strcmp(argv[i], "--tau"))        a.tau = std::atof(next());
+        else if (a.cmd == "spot" && argv[i][0] != '-') a.spot = argv[i];
         else usage();
     }
     return a;
@@ -102,6 +107,19 @@ int main(int argc, char** argv) {
     g.seed = a.seed;
     g.threads = a.threads;
     g.policyKeep = a.policyKeep;
+
+    if (a.cmd == "spot") {
+        SpotInput in;
+        std::string err;
+        if (!parseSpot(a.spot, in, err)) {
+            std::fprintf(stderr, "error: %s\n", err.c_str());
+            return 2;
+        }
+        std::unique_ptr<MLP> net;
+        if (!a.policy.empty()) net = std::make_unique<MLP>(MLP::load(a.policy));
+        std::printf("%s\n", spotQuery(in, net.get()).c_str());
+        return 0;
+    }
 
     try {
         // --learner i --opp-policy F: player i follows --policy, the others
