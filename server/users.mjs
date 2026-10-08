@@ -32,8 +32,17 @@ export function cleanAvatar(a) {
   if (!a || typeof a !== 'object') return null;
   const style = STYLES.includes(a.style) ? a.style : null;
   const seed = String(a.seed ?? '').slice(0, 40);
-  const bg = /^[0-9a-f]{6}$/i.test(a.bg ?? '') ? a.bg.toLowerCase() : undefined;
-  return style && seed ? { style, seed, ...(bg ? { bg } : {}) } : null;
+  const hex = (x) => /^([0-9a-f]{6}|transparent)$/i.test(x ?? '');
+  const out = { style, seed };
+  if (hex(a.bg)) out.bg = a.bg.toLowerCase();
+  // hand-picked parts and colours (names/values as DiceBear uses them)
+  const parts = Object.entries(a.parts ?? {}).filter(
+    ([k, v]) => /^[a-zA-Z]{1,24}$/.test(k) && (v === null || /^[a-zA-Z0-9]{1,40}$/.test(String(v))),
+  );
+  const colors = Object.entries(a.colors ?? {}).filter(([k, v]) => /^[a-zA-Z]{1,30}$/.test(k) && hex(v));
+  if (parts.length) out.parts = Object.fromEntries(parts.slice(0, 24));
+  if (colors.length) out.colors = Object.fromEntries(colors.slice(0, 16).map(([k, v]) => [k, v.toLowerCase()]));
+  return style && seed ? out : null;
 }
 
 const emptyStats = () => ({

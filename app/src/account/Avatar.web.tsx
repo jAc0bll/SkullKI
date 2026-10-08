@@ -2,21 +2,23 @@
 // DiceBear style; react-native-svg's web renderer drops some masks.
 import { memo } from 'react';
 import { Image, View, type StyleProp, type ViewStyle } from 'react-native';
-import { avatarSvg, type AvatarSpec } from './avatars';
+import { avatarSvg, type AvatarSpec, type Zoom } from './avatars';
 
 export const Avatar = memo(function Avatar({
   avatar,
   size = 40,
   ring,
   style,
+  zoom,
 }: {
   avatar: AvatarSpec | null | undefined;
+  zoom?: Zoom;
   size?: number;
   ring?: string;
   style?: StyleProp<ViewStyle>;
 }) {
   const spec = avatar ?? { style: 'adventurer' as const, seed: '?' };
-  const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(avatarSvg(spec))}`;
+  const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(avatarSvg(spec, zoom))}`;
   return (
     <View
       style={[

@@ -1,15 +1,17 @@
 import { memo } from 'react';
 import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { SvgXml } from 'react-native-svg';
-import { avatarSvg, type AvatarSpec } from './avatars';
+import { avatarSvg, type AvatarSpec, type Zoom } from './avatars';
 
 export const Avatar = memo(function Avatar({
   avatar,
   size = 40,
   ring,
   style,
+  zoom,
 }: {
   avatar: AvatarSpec | null | undefined;
+  zoom?: Zoom;
   size?: number;
   ring?: string;
   style?: StyleProp<ViewStyle>;
@@ -29,7 +31,7 @@ export const Avatar = memo(function Avatar({
         },
         style,
       ]}>
-      <SvgXml xml={avatarSvg(spec)} width="100%" height="100%" />
+      <SvgXml xml={avatarSvg(spec, zoom)} width="100%" height="100%" />
     </View>
   );
 });
