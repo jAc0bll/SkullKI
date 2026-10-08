@@ -229,6 +229,19 @@ def run(cmd: list[str]) -> str:
 MATCH = re.compile(r"utility ([+-][0-9.]+) \+- ([0-9.]+)")
 
 
+class Phases:
+    """Wall-clock seconds per phase of an iteration (logged as rec["t"])."""
+
+    def __init__(self) -> None:
+        self.t = {}
+        self.last = time.time()
+
+    def lap(self, name: str) -> None:
+        now = time.time()
+        self.t[name] = round(self.t.get(name, 0.0) + now - self.last, 2)
+        self.last = now
+
+
 def write_json(path: Path, obj: dict) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(obj, indent=1))
@@ -367,16 +380,20 @@ def main() -> None:
             pol = ["--policy", str(policy_path)] if policy_path else []
         common = ["--round", str(args.round), "--seed", str(args.seed * 1000 + t)] + pol
         rec = {"iter": t}
+        ph = Phases()
 
         # 1. value net on on-policy returns of sigma_t
         if not args.exact_values:
             run(["gen-values", "--count", str(args.value_games), "--out", str(wd / "v")] + common)
+            ph.lap("gen_values")
             vx = np.load(wd / "v_x.npy")
             vy = np.load(wd / "v_y.npy")
+            ph.lap("load_values")
             rec["value_samples"] = len(vy)
             rec["value_loss"] = train_value(value_net, vx, vy, args.value_steps, args.batch,
                                             args.lr, args.scale, gen, dev)
             export(value_net, wd / "value.bin", args.scale)
+            ph.lap("train_value")
             vals = ["--value", str(wd / "value.bin")]
         else:
             vals = ["--exact-values"]
@@ -385,6 +402,7 @@ def main() -> None:
         keep = 0.0 if args.br_vs else args.policy_keep   # exploiters need no policy samples
         run(["gen-regrets", "--count", str(args.regret_traj), "--out", str(wd / "s"),
              "--policy-keep", str(keep)] + common + vals)
+        ph.lap("gen_regrets")
         rx, rm, rt = (np.load(wd / f"s_{k}.npy") for k in ("rx", "rmask", "rtarget"))
         if args.br_vs and args.br_method in ("pi", "improve"):
             # Policy iteration: advantages relative to the CURRENT policy only.
@@ -395,6 +413,7 @@ def main() -> None:
             policy_buf.add(px, pm, pt, t)
             rec["policy_samples"] = len(px)
         rec["regret_samples"] = len(rx)
+        ph.lap("load_and_buffer")
 
         # 3. regret net from scratch -> sigma_{t+1}
         rnet = mlp(INFO_DIM, args.hidden, args.layers, ACT_DIM).to(dev)
@@ -403,6 +422,7 @@ def main() -> None:
                                           args.regret_weight_power)
         policy_path = wd / "regret.bin"
         export(rnet, policy_path, args.scale)
+        ph.lap("train_regret")
 
         is_eval = t % args.eval_every == 0 or t == args.iters
 
@@ -478,8 +498,11 @@ def main() -> None:
                 rec["eval_current"] = run(["eval", "--round", "1", "--policy", str(policy_path),
                                            "--mode", "rm"])
 
+        ph.lap("eval_and_avg")   # exploiter matches / average net / round-1 exact eval
         if t % args.checkpoint_every == 0 and t < args.iters:
             save_checkpoint(wd, t, regret_buf, policy_buf, value_net, time.time() - t_start)
+            ph.lap("checkpoint")
+        rec["t"] = ph.t
 
         iter_times.append(time.time() - it0)
         rec["iter_seconds"] = round(iter_times[-1], 1)
