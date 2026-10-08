@@ -8,7 +8,7 @@
 # Afterwards: http://localhost:8787 serves the app; put Caddy in front for
 # HTTPS (docs/MULTIPLAYER_SERVER.md).
 set -euo pipefail
-DIR=${SKULLKI_DIR:-$HOME/SkullKI}
+DIR=${SKULLKI_DIR:-$HOME/skullki-gto}
 PORT=${PORT:-8787}
 
 echo "== 1/5 Node.js und git"
@@ -20,6 +20,11 @@ command -v git >/dev/null || sudo apt-get install -y git
 echo "   node $(node -v)"
 
 echo "== 2/5 Code holen ($DIR)"
+if [ -e "$DIR" ] && [ ! -w "$DIR" -o ! -O "$DIR" ]; then
+  echo "Der Ordner $DIR gehört nicht dir ($(stat -c %U "$DIR")). Anderen Ordner nehmen:"
+  echo "  curl -fsSL https://raw.githubusercontent.com/jAc0bll/SkullKI/gto/server/setup.sh | SKULLKI_DIR=\$HOME/skullki2 bash"
+  exit 1
+fi
 if [ -d "$DIR/.git" ]; then
   git -C "$DIR" fetch -q origin gto
   git -C "$DIR" checkout -q gto
