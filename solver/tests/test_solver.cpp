@@ -736,3 +736,56 @@ TEST_CASE("Spot: rejects impossible input with a reason", "[deep][spot]") {
     // and a player known to be void cannot get that suit offered
     REQUIRE(err(revoke + "," + std::to_string(Y + 4) + "," + std::to_string(Y + 1)).find("\"value\":" + std::to_string(Y + 6) + ",") == std::string::npos);
 }
+
+TEST_CASE("Spot direct: mid-round entry gives the same strategy as the full game", "[deep][spot]") {
+    const auto net = randomPolicyNet(11);
+    const NetPolicy truth(net, NetMode::Softmax);
+    std::mt19937_64 rng(77);
+    int checked = 0;
+    for (int game = 0; game < 80; ++game) {
+        const int round = 1 + game % MAX_ROUND;
+        RoundState rs = makeRoundState(round, randomHands(round, rng));
+        while (!rs.terminal()) {
+            ActionList al;
+            legalKindActions(rs.s, al);
+            const GameState& s = rs.s;
+            if (s.phase == Phase::Playing && !s.pendingTigress && rng() % 2 == 0) {
+                const int me = s.currentPlayer;
+                DirectInput in;
+                in.round = round;
+                in.me = me;
+                s.hands[me].forEach([&](Card c) { in.hand.push_back(kindOf(c)); });
+                for (int p = 0; p < N_PLAYERS; ++p) {
+                    in.bids[p] = s.bids[p];
+                    in.won[p] = s.tricksWon[p];
+                    in.voids[p] = s.voidSuits[p];
+                    s.captured[p].forEach([&](Card c) { in.played.push_back(kindOf(c)); });
+                }
+                for (int i = 0; i < s.trickSize; ++i) {
+                    in.trick.push_back(kindOf(s.trickCards[i]));
+                    if (isTigress(s.trickCards[i])) in.tigress = s.tigressAsPirate ? 1 : 0;
+                }
+                std::vector<double> want(al.n);
+                truth.probs(rs, me, al, want.data());
+                const std::string json = spotDirect(in, net.get());
+                INFO(json);
+                REQUIRE(json.rfind("{\"ok\":true", 0) == 0);
+                const auto got = spotProbs(json, "options");
+                REQUIRE(static_cast<int>(got.size()) == al.n);
+                for (int a = 0; a < al.n; ++a) REQUIRE(got[a] == Catch::Approx(want[a]).margin(2e-4));
+                ++checked;
+            }
+            std::uniform_int_distribution<int> d(0, al.n - 1);
+            applyRound(rs, al[d(rng)]);
+        }
+    }
+    REQUIRE(checked > 150);
+
+    // inconsistent counts are explained
+    DirectInput bad;
+    bad.round = 3;
+    bad.hand = {0, 1};
+    for (int& b : bad.bids) b = 1;
+    bad.won[0] = 1;
+    REQUIRE(spotDirect(bad, nullptr).find("4 Karten als gespielt") != std::string::npos);
+}

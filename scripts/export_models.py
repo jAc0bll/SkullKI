@@ -1,6 +1,6 @@
-"""Copy the trained average strategies into the web app as float16 nets.
+"""Copy the trained average strategies into the app as float16 nets.
 
-  python scripts/export_models.py runs/full_2026-10-08     # -> web/public/models/r1..r10.bin
+  python scripts/export_models.py runs/full_2026-10-08     # -> app/assets/models/r1..r10.bin
 
 Each round's roundNN/train/avg.bin (SKMLP001, float32) becomes SKMLP016
 (float16): half the download; probabilities change by < 0.01.
@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 
 src = Path(sys.argv[1])
-dst = Path(__file__).resolve().parent.parent / "web" / "public" / "models"
+dst = Path(__file__).resolve().parent.parent / "app" / "assets" / "models"
 dst.mkdir(parents=True, exist_ok=True)
 for r in range(1, 11):
     data = (src / f"round{r:02d}" / "train" / "avg.bin").read_bytes()

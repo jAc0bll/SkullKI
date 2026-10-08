@@ -109,14 +109,23 @@ int main(int argc, char** argv) {
     g.policyKeep = a.policyKeep;
 
     if (a.cmd == "spot") {
-        SpotInput in;
+        std::unique_ptr<MLP> net;
+        if (!a.policy.empty()) net = std::make_unique<MLP>(MLP::load(a.policy));
         std::string err;
+        if (a.spot.rfind("mode=direct", 0) == 0) {
+            DirectInput d;
+            if (!parseDirect(a.spot, d, err)) {
+                std::fprintf(stderr, "error: %s\n", err.c_str());
+                return 2;
+            }
+            std::printf("%s\n", spotDirect(d, net.get()).c_str());
+            return 0;
+        }
+        SpotInput in;
         if (!parseSpot(a.spot, in, err)) {
             std::fprintf(stderr, "error: %s\n", err.c_str());
             return 2;
         }
-        std::unique_ptr<MLP> net;
-        if (!a.policy.empty()) net = std::make_unique<MLP>(MLP::load(a.policy));
         std::printf("%s\n", spotQuery(in, net.get()).c_str());
         return 0;
     }

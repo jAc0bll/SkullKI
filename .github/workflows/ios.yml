@@ -1,0 +1,65 @@
+# Builds the iPhone app as an unsigned .ipa (no Apple account needed here).
+# Install it with Sideloadly or AltStore, which sign it with your Apple ID
+# (see docs/IPHONE.md). Download: Actions → this run → Artifacts → SkullKI-ipa.
+name: iOS app
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [gto]
+    paths:
+      - 'app/**'
+      - 'engine/**'
+      - 'solver/**'
+      - '.github/workflows/ios.yml'
+
+jobs:
+  ipa:
+    runs-on: macos-26   # Xcode 26: needed for Liquid Glass
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install JS dependencies (also copies the C++ solver into the native module)
+        working-directory: app
+        run: npm ci
+
+      - name: Generate the Xcode project
+        working-directory: app
+        run: npx expo prebuild --platform ios --clean
+
+      - name: Build (Release, unsigned)
+        working-directory: app/ios
+        run: |
+          set -o pipefail
+          xcodebuild -workspace SkullKI.xcworkspace -scheme SkullKI -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            | tee xcodebuild.log | grep -E "error:|warning: .*SkSolver|\*\* BUILD" || true
+          test -d build/Build/Products/Release-iphoneos/SkullKI.app
+
+      - name: Package .ipa
+        run: |
+          mkdir -p Payload
+          cp -R app/ios/build/Build/Products/Release-iphoneos/SkullKI.app Payload/
+          zip -qry SkullKI.ipa Payload
+          ls -lh SkullKI.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SkullKI-ipa
+          path: SkullKI.ipa
+          retention-days: 30
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: app/ios/xcodebuild.log

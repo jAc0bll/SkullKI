@@ -344,4 +344,133 @@ std::string spotQuery(const SpotInput& in, const MLP* net) {
     return o.str();
 }
 
+bool parseDirect(const std::string& text, DirectInput& in, std::string& err) {
+    std::istringstream words(text);
+    std::string w;
+    while (words >> w) {
+        const auto eq = w.find('=');
+        if (eq == std::string::npos) { err = "bad token: " + w; return false; }
+        const std::string key = w.substr(0, eq), val = w.substr(eq + 1);
+        if (key == "mode") continue;
+        std::vector<int> v;
+        std::istringstream items(val);
+        std::string item;
+        while (std::getline(items, item, ',')) {
+            if (item.empty()) continue;
+            try { v.push_back(std::stoi(item)); } catch (...) { err = "bad number in: " + w; return false; }
+        }
+        auto four = [&](int* dst) {
+            if (v.size() != N_PLAYERS) return false;
+            for (int p = 0; p < N_PLAYERS; ++p) dst[p] = v[p];
+            return true;
+        };
+        if (key == "round" && v.size() == 1)        in.round = v[0];
+        else if (key == "me" && v.size() == 1)      in.me = v[0];
+        else if (key == "tigress" && v.size() == 1) in.tigress = v[0];
+        else if (key == "hand")                     in.hand = v;
+        else if (key == "played")                   in.played = v;
+        else if (key == "trick")                    in.trick = v;
+        else if (key == "bids" && four(in.bids)) {}
+        else if (key == "won" && four(in.won)) {}
+        else if (key == "voids" && four(in.voids)) {}
+        else { err = "bad token: " + w; return false; }
+    }
+    return true;
+}
+
+std::string spotDirect(const DirectInput& in, const MLP* net) {
+    if (in.round < 1 || in.round > MAX_ROUND) return error("Runde muss zwischen 1 und 10 liegen");
+    if (in.me < 0 || in.me >= N_PLAYERS) return error("Sitz muss zwischen 1 und 4 liegen");
+    int tricksDone = 0;
+    for (int p = 0; p < N_PLAYERS; ++p) {
+        if (in.bids[p] < 0 || in.bids[p] > in.round)
+            return error("Ansage von " + seatName(p) + " fehlt oder ist größer als " + std::to_string(in.round));
+        if (in.won[p] < 0) return error("Stiche können nicht negativ sein");
+        tricksDone += in.won[p];
+    }
+    if (tricksDone >= in.round) return error("Es sind schon alle Stiche gespielt");
+    if (static_cast<int>(in.played.size()) != N_PLAYERS * tricksDone)
+        return error("Bei " + std::to_string(tricksDone) + " gespielten Stichen müssen " +
+                     std::to_string(N_PLAYERS * tricksDone) + " Karten als gespielt eingetragen sein (gerade " +
+                     std::to_string(in.played.size()) + ")");
+    if (in.trick.size() >= N_PLAYERS) return error("Im aktuellen Stich liegen höchstens 3 Karten vor dir");
+    const int handSize = in.round - tricksDone;
+    if (static_cast<int>(in.hand.size()) != handSize)
+        return error("Du solltest noch " + std::to_string(handSize) + " Karten auf der Hand haben (gerade " +
+                     std::to_string(in.hand.size()) + ")");
+
+    std::array<bool, N_CARDS> used{};
+    std::string msg;
+    auto take = [&](int k) -> int {
+        if (k < 0 || k >= N_KINDS) { msg = "Unbekannte Karte"; return -1; }
+        const int c = allocate(k, used);
+        if (c < 0) msg = "Zu oft eingetragen: " + kindDe(k);
+        return c;
+    };
+    GameState s = initialState(0);
+    s.roundNumber = static_cast<std::uint8_t>(in.round);
+    s.phase = Phase::Playing;
+    for (int p = 0; p < N_PLAYERS; ++p) {
+        s.bids[p] = static_cast<std::int8_t>(in.bids[p]);
+        s.tricksWon[p] = static_cast<std::int8_t>(in.won[p]);
+        s.voidSuits[p] = static_cast<std::uint8_t>(in.voids[p] & 0xF);
+    }
+    s.bidsSubmitted = N_PLAYERS;
+    s.tricksPlayed = static_cast<std::int8_t>(tricksDone);
+    for (int k : in.hand) {
+        const int c = take(k);
+        if (c < 0) return error(msg);
+        s.hands[in.me].add(static_cast<Card>(c));
+    }
+    for (int k : in.played) {   // who captured what does not matter here
+        const int c = take(k);
+        if (c < 0) return error(msg);
+        s.captured[0].add(static_cast<Card>(c));
+    }
+    const int n = static_cast<int>(in.trick.size());
+    const int leader = (in.me - n + N_PLAYERS) % N_PLAYERS;
+    s.trickLeader = static_cast<std::int8_t>(leader);
+    s.currentPlayer = static_cast<std::int8_t>(leader);
+    bool sawTigress = false;
+    for (int i = 0; i < n; ++i) {
+        const int p = (leader + i) % N_PLAYERS, k = in.trick[i];
+        const int c = take(k);
+        if (c < 0) return error(msg);
+        if (k < N_COLORED && ((s.voidSuits[p] >> (k / CARDS_PER_SUIT)) & 1u))
+            return error(seatName(p) + " hat laut Eingabe kein " + SUIT_DE[k / CARDS_PER_SUIT]);
+        s.hands[p].add(static_cast<Card>(c));
+        applyAction(s, Action::makePlay(static_cast<Card>(c)));
+        if (k == KIND_TIGRESS) {
+            if (in.tigress < 0) return error("Tigress im Stich: als Pirat oder als Flucht?");
+            applyAction(s, Action::makeTigressMode(in.tigress == 1));
+            sawTigress = true;
+        }
+    }
+    if (in.tigress >= 0 && !sawTigress) return error("Tigress-Modus angegeben, aber keine Tigress im Stich");
+
+    RoundState rs;
+    rs.s = s;
+    rs.round = static_cast<std::uint8_t>(in.round);
+
+    ActionList legal;
+    legalKindActions(rs.s, legal);
+    double p[ActionList::CAPACITY];
+    if (net) policy(*net, rs, in.me, legal, p);
+    std::ostringstream o;
+    o << "{\"ok\":true,\"round\":" << in.round << ",\"me\":" << in.me
+      << ",\"phase\":\"playing\",\"toAct\":" << in.me << ",\"leader\":" << leader << ",\"hand\":[";
+    bool first = true;
+    rs.s.hands[in.me].forEach([&](Card c) { o << (first ? "" : ",") << int(kindOf(c)); first = false; });
+    o << "],\"voids\":[";
+    for (int q = 0; q < N_PLAYERS; ++q) o << (q ? "," : "") << int(rs.s.voidSuits[q]);
+    o << "],\"options\":[";
+    for (int a = 0; a < legal.n; ++a) {
+        o << (a ? "," : "") << "{\"type\":\"card\",\"value\":" << int(kindOf(legal[a].card));
+        if (net) o << ",\"p\":" << prob(p[a]);
+        o << '}';
+    }
+    o << "]}";
+    return o.str();
+}
+
 } // namespace sk::solver

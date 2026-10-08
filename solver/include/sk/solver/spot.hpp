@@ -33,6 +33,27 @@ struct SpotInput {
     std::vector<int> play;
 };
 
+// Mid-round entry without the history: what the strategy sees is only the
+// current situation, so this gives exactly the answer of the full replay.
+//   hand    my cards now
+//   won     tricks won so far by seat
+//   played  every card of the completed tricks (any order)
+//   trick   the cards played before me in the current trick, in order (the
+//           leader follows: me - trick size); tigress = mode of a Tigress in it
+//   voids   suits (bit 0..3 = Gelb, Grün, Lila, Schwarz) a seat is known not
+//           to have; voids shown in the current trick are added automatically
+struct DirectInput {
+    int round = 1;
+    int me = 0;
+    std::vector<int> hand;
+    int bids[N_PLAYERS] = {-1, -1, -1, -1};
+    int won[N_PLAYERS] = {0, 0, 0, 0};
+    std::vector<int> played;
+    std::vector<int> trick;
+    int tigress = -1;                      // -1 none, 0 escape, 1 pirate
+    int voids[N_PLAYERS] = {0, 0, 0, 0};
+};
+
 // Parses "round=5 me=2 hand=3,27,58 bids=1,0,-1,2 play=4,6,59,241".
 // Missing keys keep their defaults. Returns false and sets `error` on junk.
 bool parseSpot(const std::string& text, SpotInput& in, std::string& error);
@@ -42,5 +63,12 @@ bool parseSpot(const std::string& text, SpotInput& in, std::string& error);
 // options carry no probabilities. Never throws: input errors come back as
 // {"ok":false,"error":"..."}.
 std::string spotQuery(const SpotInput& in, const MLP* net);
+
+// "mode=direct round=.. me=.. hand=.. bids=.. won=.. played=.. trick=.. tigress=.. voids=.."
+bool parseDirect(const std::string& text, DirectInput& in, std::string& error);
+
+// JSON: ok, round, me, phase "playing", toAct (= me), hand, unseen,
+// options[{type:"card", value, p}] or {ok:false, error}.
+std::string spotDirect(const DirectInput& in, const MLP* net);
 
 } // namespace sk::solver

@@ -1,2 +1,4 @@
 # Shell scripts must keep Unix line endings (they run on the Linux server).
 *.sh text eol=lf
+# Strategy nets
+*.bin binary

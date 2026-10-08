@@ -50,8 +50,3 @@ debug.out
 
 # --- Claude Code session/local settings ---
 .claude/
-# web app: build output, dependencies, exported nets (scripts/export_models.sh)
-web/node_modules/
-web/dist/
-web/public/models/
-web/tsconfig.tsbuildinfo

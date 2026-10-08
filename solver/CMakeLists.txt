@@ -12,6 +12,7 @@ add_library(sk_solver STATIC
     src/mlp.cpp
     src/deep.cpp
     src/spot.cpp
+    src/spot_c_api.cpp
 )
 
 target_include_directories(sk_solver PUBLIC include)
