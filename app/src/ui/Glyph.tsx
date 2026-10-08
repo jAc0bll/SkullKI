@@ -1,5 +1,6 @@
 // Line icons for suits and characters, drawn for this app (24x24, stroke).
 import type { ReactElement } from 'react';
+import { View } from 'react-native';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 import type { Glyph as G } from '@/solver/cards';
 
@@ -70,9 +71,13 @@ const art = (c: string): Record<G, ReactElement> => ({
 });
 
 export function Glyph({ name, size = 18, color = '#fff', weight = 1.7 }: { name: G; size?: number; color?: string; weight?: number }) {
+  // Wrapped in a View so it stacks like other views (on web a bare <svg>
+  // would paint below absolutely positioned siblings such as glass layers).
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={weight} strokeLinecap="round" strokeLinejoin="round">
-      {art(color)[name]}
-    </Svg>
+    <View style={{ width: size, height: size }}>
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={weight} strokeLinecap="round" strokeLinejoin="round">
+        {art(color)[name]}
+      </Svg>
+    </View>
   );
 }
