@@ -24,10 +24,9 @@ public:
 private:
     struct Layer {
         int in = 0, out = 0;
-        std::vector<float> w;   // out x in, row-major
+        std::vector<float> wT;   // in x out (transposed from the file's out x in)
         std::vector<float> b;
     };
-    std::vector<float> firstT_;   // first layer transposed (in x out): inputs are sparse
     std::vector<Layer> layers_;
 };
 

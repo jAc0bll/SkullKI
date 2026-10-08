@@ -565,3 +565,52 @@ TEST_CASE("ImprovedPolicy: follows the base unless confidently better", "[deep][
     REQUIRE(pr[0] == Catch::Approx(0.5));   // below threshold: the base (uniform)
     REQUIRE(pr[1] == Catch::Approx(0.5));
 }
+
+TEST_CASE("MLP: optimised forward matches a naive reference", "[deep][mlp]") {
+    std::mt19937_64 rng(99);
+    std::uniform_real_distribution<float> uw(-0.5f, 0.5f);
+    for (int outDim : {7, 1}) {
+        const std::vector<std::pair<int, int>> shapes = {{37, 24}, {24, 24}, {24, outDim}};
+        std::vector<std::vector<float>> W, B;
+        const std::string path = "test_mlp_ref_tmp.bin";
+        {
+            std::ofstream f(path, std::ios::binary);
+            f.write("SKMLP001", 8);
+            const std::uint32_t n = static_cast<std::uint32_t>(shapes.size());
+            f.write(reinterpret_cast<const char*>(&n), 4);
+            for (auto [in, out] : shapes) {
+                std::vector<float> w(static_cast<std::size_t>(in) * out), b(out);
+                for (float& v : w) v = uw(rng);
+                for (float& v : b) v = uw(rng);
+                const std::uint32_t i32 = in, o32 = out;
+                f.write(reinterpret_cast<const char*>(&i32), 4);
+                f.write(reinterpret_cast<const char*>(&o32), 4);
+                f.write(reinterpret_cast<const char*>(w.data()), w.size() * 4);
+                f.write(reinterpret_cast<const char*>(b.data()), b.size() * 4);
+                W.push_back(w);
+                B.push_back(b);
+            }
+        }
+        const MLP m = MLP::load(path);
+        std::remove(path.c_str());
+        for (int trial = 0; trial < 50; ++trial) {
+            std::uint8_t x[37];
+            for (auto& v : x) v = (rng() % 3 == 0) ? static_cast<std::uint8_t>(rng() % 4) : 0;
+            // Naive reference: row-major, double precision.
+            std::vector<double> cur(x, x + 37);
+            for (std::size_t li = 0; li < shapes.size(); ++li) {
+                const auto [in, out] = shapes[li];
+                std::vector<double> nxt(out);
+                for (int o = 0; o < out; ++o) {
+                    double acc = B[li][o];
+                    for (int k = 0; k < in; ++k) acc += W[li][static_cast<std::size_t>(o) * in + k] * cur[k];
+                    nxt[o] = (li + 1 < shapes.size() && acc < 0.0) ? 0.0 : acc;
+                }
+                cur = nxt;
+            }
+            std::vector<float> y(outDim);
+            m.forward(x, y.data());
+            for (int o = 0; o < outDim; ++o) REQUIRE(y[o] == Catch::Approx(cur[o]).margin(1e-4));
+        }
+    }
+}

@@ -169,6 +169,13 @@ class Batches:
             torch.cuda.empty_cache()
 
 
+def make_adam(net, lr: float, dev: torch.device) -> torch.optim.Optimizer:
+    # Fused Adam: one CUDA kernel per step instead of several per parameter.
+    if dev.type == "cuda":
+        return torch.optim.Adam(net.parameters(), lr=lr, fused=True)
+    return torch.optim.Adam(net.parameters(), lr=lr)
+
+
 def train_masked(net, buf: Reservoir, steps: int, batch: int, lr: float, kind: str,
                  scale: float, gen: torch.Generator, dev: torch.device,
                  weight_power: float = 1.0) -> float:
@@ -176,7 +183,7 @@ def train_masked(net, buf: Reservoir, steps: int, batch: int, lr: float, kind: s
     kind='policy': weighted cross-entropy of masked softmax vs. target sigma.
     Sample weight = iteration ** weight_power (1 = Linear CFR; 2 = DCFR's
     gamma=2 for the average strategy, forgetting early iterations faster)."""
-    opt = torch.optim.Adam(net.parameters(), lr=lr)
+    opt = make_adam(net, lr, dev)
     data = Batches([buf.x, buf.mask, buf.target, buf.iter], buf.size, dev, gen)
     last = 0.0
     for step in range(steps):
@@ -204,7 +211,7 @@ def train_masked(net, buf: Reservoir, steps: int, batch: int, lr: float, kind: s
 
 def train_value(net, x: np.ndarray, y: np.ndarray, steps: int, batch: int, lr: float,
                 scale: float, gen: torch.Generator, dev: torch.device) -> float:
-    opt = torch.optim.Adam(net.parameters(), lr=lr)
+    opt = make_adam(net, lr, dev)
     data = Batches([x, y], len(y), dev, gen)
     last = 0.0
     for step in range(steps):
@@ -329,6 +336,9 @@ def main() -> None:
 
     dev = torch.device("cuda" if args.device == "auto" and torch.cuda.is_available()
                        else ("cpu" if args.device == "auto" else args.device))
+    # TF32 matrix multiplies on the GPU: much faster, precision is plenty for
+    # these regressions.
+    torch.set_float32_matmul_precision("high")
     torch.manual_seed(args.seed)
     gen = torch.Generator().manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
