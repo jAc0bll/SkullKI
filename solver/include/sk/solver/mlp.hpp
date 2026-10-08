@@ -10,6 +10,7 @@ namespace sk::solver {
 // and exported to a small binary file:
 //   "SKMLP001" | uint32 nLayers | per layer: uint32 in, uint32 out,
 //   float32 weight[out][in], float32 bias[out]
+// ("SKMLP016" instead: the same with float16 values.)
 // ReLU after every layer but the last. Thread-safe for concurrent forward().
 class MLP {
 public:

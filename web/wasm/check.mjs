@@ -1,11 +1,11 @@
 // Plays random spots through the WebAssembly build and compares every answer
 // with the native sk_deep (same code, so probabilities must agree).
-//   node web/wasm/check.mjs <models dir with r1.bin..r10.bin> <path to sk_deep>
+//   node web/wasm/check.mjs <models dir with r1.bin..r10.bin> <path to sk_deep> [models dir for sk_deep]
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import createSk from "../src/wasm/sk.js";
 
-const [modelDir, native] = process.argv.slice(2);
+const [modelDir, native, nativeModelDir = modelDir] = process.argv.slice(2);
 const sk = await createSk();
 const spot = sk.cwrap("sk_spot", "string", ["string"]);
 const load = sk.cwrap("sk_load", "number", ["number", "string"]);
@@ -30,7 +30,7 @@ for (let round = 1; round <= 10; round++) {
       const a = JSON.parse(spot(text));
       if (!a.ok) throw new Error(text + " -> " + a.error);
       if (game === 0 || Math.random() < 0.25) {
-        const b = JSON.parse(execFileSync(native, ["spot", "--policy", `${modelDir}/r${round}.bin`, text]).toString());
+        const b = JSON.parse(execFileSync(native, ["spot", "--policy", `${nativeModelDir}/r${round}.bin`, text]).toString());
         const pa = [...(a.bidAdvice ?? []), ...a.options].map((o) => o.p ?? 0);
         const pb = [...(b.bidAdvice ?? []), ...b.options].map((o) => o.p ?? 0);
         if (pa.length !== pb.length) throw new Error("option count differs: " + text);
@@ -45,4 +45,4 @@ for (let round = 1; round <= 10; round++) {
   }
 }
 console.log(`compared ${compared} spots, max probability difference ${worst.toExponential(2)}`);
-if (worst > 1e-3) process.exit(1);
+if (worst > (nativeModelDir === modelDir ? 1e-3 : 2e-2)) process.exit(1);

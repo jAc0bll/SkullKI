@@ -7,12 +7,42 @@
 
 namespace sk::solver {
 
+namespace {
+
+float halfToFloat(std::uint16_t h) {
+    const std::uint32_t sign = static_cast<std::uint32_t>(h & 0x8000u) << 16;
+    std::uint32_t exp = (h >> 10) & 0x1Fu, man = h & 0x3FFu, bits;
+    if (exp == 0) {
+        if (man == 0) bits = sign;
+        else {   // subnormal: normalise
+            exp = 127 - 15 + 1;
+            while (!(man & 0x400u)) { man <<= 1; --exp; }
+            bits = sign | (exp << 23) | ((man & 0x3FFu) << 13);
+        }
+    } else if (exp == 31) bits = sign | 0x7F800000u | (man << 13);
+    else bits = sign | ((exp - 15 + 127) << 23) | (man << 13);
+    float out;
+    std::memcpy(&out, &bits, 4);
+    return out;
+}
+
+void readHalf(std::ifstream& f, std::vector<float>& dst) {
+    std::vector<std::uint16_t> h(dst.size());
+    f.read(reinterpret_cast<char*>(h.data()), h.size() * 2);
+    for (std::size_t i = 0; i < h.size(); ++i) dst[i] = halfToFloat(h[i]);
+}
+
+} // namespace
+
 MLP MLP::load(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
     if (!f) throw std::runtime_error("cannot open model " + path);
     char magic[8];
     f.read(magic, 8);
-    if (std::memcmp(magic, "SKMLP001", 8) != 0) throw std::runtime_error("bad model file " + path);
+    // SKMLP016: same layout with float16 weights and biases (half the size,
+    // for downloads; see scripts/export_models.py).
+    const bool half = std::memcmp(magic, "SKMLP016", 8) == 0;
+    if (!half && std::memcmp(magic, "SKMLP001", 8) != 0) throw std::runtime_error("bad model file " + path);
     std::uint32_t n = 0;
     f.read(reinterpret_cast<char*>(&n), 4);
     MLP m;
@@ -26,8 +56,13 @@ MLP MLP::load(const std::string& path) {
         l.out = static_cast<int>(out);
         w.resize(static_cast<std::size_t>(in) * out);
         l.b.resize(out);
-        f.read(reinterpret_cast<char*>(w.data()), w.size() * sizeof(float));
-        f.read(reinterpret_cast<char*>(l.b.data()), l.b.size() * sizeof(float));
+        if (half) {
+            readHalf(f, w);
+            readHalf(f, l.b);
+        } else {
+            f.read(reinterpret_cast<char*>(w.data()), w.size() * sizeof(float));
+            f.read(reinterpret_cast<char*>(l.b.data()), l.b.size() * sizeof(float));
+        }
         if (!f) throw std::runtime_error("truncated model file " + path);
         if (!m.layers_.empty() && m.layers_.back().out != l.in)
             throw std::runtime_error("layer size mismatch in " + path);

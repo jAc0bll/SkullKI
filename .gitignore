@@ -54,3 +54,4 @@ debug.out
 web/node_modules/
 web/dist/
 web/public/models/
+web/tsconfig.tsbuildinfo

@@ -14,6 +14,6 @@ mkdir -p "$OUT"
     web/wasm/spot_wasm.cpp \
     -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createSk \
     -sENVIRONMENT=web,worker,node -sALLOW_MEMORY_GROWTH=1 -sFILESYSTEM=1 -sFORCE_FILESYSTEM=1 \
-    -sEXPORTED_FUNCTIONS=_sk_load,_sk_spot -sEXPORTED_RUNTIME_METHODS=cwrap,FS \
+    -sEXPORTED_FUNCTIONS=_sk_load,_sk_spot -sEXPORTED_RUNTIME_METHODS=cwrap,ccall,FS \
     -o "$OUT/sk.js"
 ls -l "$OUT"
