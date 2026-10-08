@@ -27,6 +27,7 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { WebSocketServer } from 'ws';
+import * as games from './games.mjs';
 import * as users from './users.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -137,6 +138,16 @@ class Room {
       const view = game(`view id=${this.gameId} seat=${seat}`);
       users.recordGame(p.account, { mode: 'online', ...users.summarize(view, seat), players: names });
     });
+    const accounts = this.players.map((p) => (p.account ? users.getUser(p.account) : null));
+    const optedOut = this.players.some((p, s) => !p.bot && accounts[s] && !users.sharesGames(accounts[s]));
+    if (!optedOut) {
+      games.saveGame({
+        mode: 'online',
+        source: 'server',
+        players: this.players.map((p, s) => ({ pid: p.bot ? 'bot' : accounts[s] ? users.anonId(accounts[s]) : games.guestId(), human: !p.bot })),
+        log: JSON.parse(sk.ccall('sk_spot', 'string', ['string'], [`game log id=${this.gameId}`])),
+      });
+    }
   }
   nextRound() {
     clearTimeout(this.nextTimer);
@@ -260,7 +271,8 @@ const TYPES = {
 //   POST /api/login {name, avatar?}        -> user (new names are created)
 //   GET  /api/users/:name                  -> user
 //   POST /api/users/:name/avatar {avatar}  -> user
-//   POST /api/users/:name/games {mode:'bot', score, rank, rounds, bidsHit, gtoAgree, gtoTotal, players}
+//   POST /api/users/:name/games {score, rank, rounds, bidsHit, gtoAgree, gtoTotal, players, log?}
+//   POST /api/users/:name/settings {shareGames}
 //   GET  /api/leaderboard
 function api(req, res, url) {
   const send = (code, obj) => {
@@ -278,7 +290,7 @@ function api(req, res, url) {
   let body = '';
   req.on('data', (c) => {
     body += c;
-    if (body.length > 20_000) req.destroy();
+    if (body.length > 400_000) req.destroy();
   });
   req.on('end', () => {
     let data = {};
@@ -304,6 +316,18 @@ function api(req, res, url) {
       }
       if (parts[3] === 'games' && req.method === 'POST') {
         const u = users.recordGame(parts[2], { ...data, mode: 'bot' });
+        if (!u) return send(404, { error: 'Unbekannter Name' });
+        if (data.log && users.sharesGames(u))
+          games.saveGame({
+            mode: 'bot',
+            source: 'app',
+            players: [0, 1, 2, 3].map((s) => ({ pid: s === 0 ? users.anonId(u) : 'bot', human: s === 0 })),
+            log: data.log,
+          });
+        return send(200, users.publicUser(u));
+      }
+      if (parts[3] === 'settings' && req.method === 'POST') {
+        const u = users.setShareGames(parts[2], data.shareGames);
         return u ? send(200, users.publicUser(u)) : send(404, { error: 'Unbekannter Name' });
       }
     }

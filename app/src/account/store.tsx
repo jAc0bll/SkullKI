@@ -31,6 +31,8 @@ export interface User {
   createdAt: string;
   stats: Stats;
   history: HistoryEntry[];
+  /** games may be kept anonymously to improve the AI */
+  shareGames: boolean;
 }
 export interface LeaderRow {
   name: string;
@@ -73,7 +75,8 @@ interface Account {
   login: (name: string, avatar: AvatarSpec) => Promise<boolean>;
   logout: () => void;
   setAvatar: (a: AvatarSpec) => Promise<void>;
-  recordBotGame: (view: GameView, players: string[]) => Promise<void>;
+  recordBotGame: (view: GameView, players: string[], log?: object) => Promise<void>;
+  setShareGames: (on: boolean) => Promise<void>;
   refresh: () => Promise<void>;
   leaderboard: () => Promise<LeaderRow[]>;
 }
@@ -133,12 +136,27 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           setError((e as Error).message);
         }
       },
-      async recordBotGame(view, players) {
+      async recordBotGame(view, players, log) {
         if (!user) return;
         try {
-          keep(await call<User>(`/api/users/${encodeURIComponent(user.name)}/games`, { ...summarize(view, view.seat), players }));
+          keep(
+            await call<User>(`/api/users/${encodeURIComponent(user.name)}/games`, {
+              ...summarize(view, view.seat),
+              players,
+              log: user.shareGames !== false ? log : undefined,
+            }),
+          );
         } catch {
           /* offline: this game is not counted */
+        }
+      },
+      async setShareGames(on) {
+        if (!user) return;
+        keep({ ...user, shareGames: on });
+        try {
+          keep(await call<User>(`/api/users/${encodeURIComponent(user.name)}/settings`, { shareGames: on }));
+        } catch (e) {
+          setError((e as Error).message);
         }
       },
       leaderboard: () => call<LeaderRow[]>('/api/leaderboard'),

@@ -2,6 +2,7 @@
 // JSON file (server/data/users.json). Written atomically, debounced.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'data', 'users.json');
@@ -50,7 +51,28 @@ const emptyStats = () => ({
   bot: { games: 0, wins: 0 }, online: { games: 0, wins: 0 },
 });
 
-export const publicUser = (u) => u && { name: u.name, avatar: u.avatar, createdAt: u.createdAt, stats: u.stats, history: u.history };
+export const publicUser = (u) =>
+  u && { name: u.name, avatar: u.avatar, createdAt: u.createdAt, stats: u.stats, history: u.history, shareGames: u.shareGames !== false };
+
+/** Pseudonymous id used in the game logs instead of the name. */
+export function anonId(u) {
+  if (!u.anonId) {
+    u.anonId = 'p-' + randomBytes(5).toString('hex');
+    save();
+  }
+  return u.anonId;
+}
+
+/** May this player's games be kept for analysis? (default yes, can be switched off) */
+export const sharesGames = (u) => !!u && u.shareGames !== false;
+
+export function setShareGames(name, on) {
+  const u = getUser(name);
+  if (!u) return null;
+  u.shareGames = !!on;
+  save();
+  return u;
+}
 
 export function getUser(name) {
   return users[String(name ?? '').trim().toLowerCase()] ?? null;

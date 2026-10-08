@@ -23,6 +23,7 @@ namespace sk::solver {
 //   game bot id=N seat=P               -> seat P plays the strategy (sampled)
 //   game hint id=N seat=P              -> {"options":[{"a":..,"p":..}]} without acting
 //   game next id=N                     -> deal the next round after a round end
+//   game log id=N                      -> the whole game, replayable (see session.cpp)
 //   game drop id=N
 // Nets: nets[round] is the round's average-strategy net (may be null while
 // loading: "bot" then answers {"ok":false,"error":"net"}).
@@ -49,6 +50,20 @@ struct Review {
     double pChosen = 0, pBest = 0;
 };
 
+// Everything needed to replay a game exactly, for analysing human play.
+struct LoggedAction {
+    int seat = 0;
+    std::string a;          // "bid:2" | "card:13" | "tig:1"
+    bool human = false;
+    double p = -1;          // strategy probability of the chosen action (humans; -1 unknown)
+    std::string best;       // the strategy's most likely action (humans)
+};
+struct RoundLog {
+    int round = 0, start = 0;
+    std::vector<int> hands[N_PLAYERS];   // kinds dealt
+    std::vector<LoggedAction> actions;   // in the order they happened
+};
+
 struct GameSession {
     GameState s;
     std::mt19937_64 rng;
@@ -58,6 +73,7 @@ struct GameSession {
     TrickRecord current, last;
     std::vector<RoundResult> results;
     std::vector<Review> reviews;
+    std::vector<RoundLog> log;
 };
 
 std::string gameCommand(const std::string& text, const std::array<const MLP*, 11>& nets);

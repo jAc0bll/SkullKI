@@ -46,6 +46,14 @@ export default function InfoScreen() {
             Die KI optimiert die Punkte jeder Runde. Dass man bei großem Rückstand in Runde 10 mehr riskieren sollte, weiß sie noch nicht. Gerechnet wird komplett auf deinem iPhone, ohne Internet.
           </Text>
         </Panel>
+        <Panel style={{ gap: 10 }}>
+          <Text style={type.title}>Deine Daten</Text>
+          <Text style={type.callout}>
+            Profil: Name, Avatar und Statistik liegen auf dem SkullKI-Server. Gespielte Partien werden zusätzlich anonym
+            gespeichert (zufällige Nummer statt Name), um zu lernen, wie Menschen spielen. Das lässt sich im Profil
+            abschalten. Der Solver rechnet nur auf deinem Gerät.
+          </Text>
+        </Panel>
         <Panel style={{ gap: 6 }}>
           <Text style={type.title}>Avatare</Text>
           <Text style={type.footnote}>Erzeugt mit DiceBear (github.com/dicebear/dicebear, MIT). Stile:</Text>

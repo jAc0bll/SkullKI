@@ -153,6 +153,9 @@ export default function Online() {
             ) : (
               <Text style={[type.callout, { textAlign: 'center' }]}>Warte, bis der Host startet…</Text>
             )}
+            <Text style={[type.footnote, { textAlign: 'center' }]}>
+              Spiele werden anonym (ohne Namen) gespeichert, um die KI zu verbessern. Abschalten: Profil.
+            </Text>
             <GlassButton label="Raum verlassen" onPress={net.leave} />
           </Animated.View>
         )}

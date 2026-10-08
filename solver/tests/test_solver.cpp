@@ -861,3 +861,86 @@ TEST_CASE("Game session: bots play 10 rounds, views hide what they must", "[deep
     }
     REQUIRE(gameCommand("game act id=999 seat=0 a=bid:1", nets).find("nicht gefunden") != std::string::npos);
 }
+
+TEST_CASE("Game session: the log replays to the same scores", "[deep][session]") {
+    const auto net = randomPolicyNet(9);
+    std::array<const MLP*, 11> nets{};
+    for (int r = 1; r <= MAX_ROUND; ++r) nets[r] = net.get();
+    const std::string id = field(gameCommand("game new seed=42 start=2", nets), "id");
+    for (int steps = 0; steps < 3000; ++steps) {
+        const std::string v = gameCommand("game view id=" + id + " seat=0", nets);
+        const std::string phase = field(v, "phase");
+        if (phase == "\"gameOver\"") break;
+        if (phase == "\"roundEnd\"") { gameCommand("game next id=" + id, nets); continue; }
+        const std::string toAct = field(v, "toAct");
+        const int seat = toAct[1] - '0';
+        if (seat == 1) {   // a "human"
+            const std::string legal = field(gameCommand("game view id=" + id + " seat=1", nets), "legal");
+            const auto q = legal.find("\"a\":\"");
+            gameCommand("game act id=" + id + " seat=1 a=" + legal.substr(q + 5, legal.find('"', q + 5) - q - 5), nets);
+        } else {
+            gameCommand("game bot id=" + id + " seat=" + std::to_string(seat), nets);
+        }
+    }
+    const std::string log = gameCommand("game log id=" + id, nets);
+    INFO(log.substr(0, 400));
+    // replay every round with the engine from the logged deals and actions
+    std::size_t pos = 0;
+    int scores[N_PLAYERS] = {0, 0, 0, 0};
+    int rounds = 0;
+    while ((pos = log.find("{\"round\":", pos)) != std::string::npos) {
+        const std::string round = log.substr(pos, log.find("]]}", pos) + 3 - pos);
+        ++pos;
+        const int r = std::stoi(field(round, "round")), start = std::stoi(field(round, "start"));
+        GameState s = initialState(start);
+        s.roundNumber = static_cast<std::uint8_t>(r);
+        std::array<bool, N_CARDS> used{};
+        const std::string hands = field(round, "hands");
+        std::size_t h = 1;
+        for (int p = 0; p < N_PLAYERS; ++p) {
+            const std::size_t open = hands.find('[', h), close = hands.find(']', open);
+            std::istringstream items(hands.substr(open + 1, close - open - 1));
+            std::string item;
+            while (std::getline(items, item, ',')) {
+                const Kind k = static_cast<Kind>(std::stoi(item));
+                for (int i = 0; i < kindMultiplicity(k); ++i) {
+                    const Card c = static_cast<Card>(firstCardOfKind(k) + i);
+                    if (!used[c]) { used[c] = true; s.hands[p].add(c); break; }
+                }
+            }
+            h = close + 1;
+        }
+        int bids[N_PLAYERS] = {-1, -1, -1, -1};
+        const std::string acts = field(round, "actions");
+        std::size_t a = 0;
+        while ((a = acts.find('[', a + 1)) != std::string::npos) {
+            const int seat = acts[a + 1] - '0';
+            const std::size_t q = acts.find('"', a), q2 = acts.find('"', q + 1);
+            const std::string act = acts.substr(q + 1, q2 - q - 1);
+            const int value = std::stoi(act.substr(act.find(':') + 1));
+            if (act.rfind("bid:", 0) == 0) {
+                bids[seat] = value;
+                if (std::count(bids, bids + N_PLAYERS, -1) == 0)
+                    while (s.phase == Phase::Bidding) applyAction(s, Action::makeBid(bids[s.currentPlayer]));
+            } else if (act.rfind("tig:", 0) == 0) {
+                applyAction(s, Action::makeTigressMode(value == 1));
+            } else {
+                REQUIRE(s.currentPlayer == seat);
+                Card c = 0;
+                for (int i = 0; i < kindMultiplicity(static_cast<Kind>(value)); ++i)
+                    if (s.hands[seat].has(static_cast<Card>(firstCardOfKind(static_cast<Kind>(value)) + i))) {
+                        c = static_cast<Card>(firstCardOfKind(static_cast<Kind>(value)) + i);
+                        break;
+                    }
+                applyAction(s, Action::makePlay(c));
+            }
+        }
+        for (int p = 0; p < N_PLAYERS; ++p) scores[p] += s.scores[p];
+        ++rounds;
+    }
+    REQUIRE(rounds == 10);
+    std::ostringstream want;
+    want << '[' << scores[0] << ',' << scores[1] << ',' << scores[2] << ',' << scores[3] << ']';
+    REQUIRE(field(log, "scores") == want.str());
+    REQUIRE(log.find(",1,") != std::string::npos);   // human moves are marked
+}

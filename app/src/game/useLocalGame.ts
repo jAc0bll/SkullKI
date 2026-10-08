@@ -11,7 +11,10 @@ const ME = 0;
 
 const call = (cmd: string) => JSON.parse(rawQuery(cmd));
 
-export function useLocalGame(me: { name: string; avatar: AvatarSpec | null }, onGameOver?: (v: GameView, names: string[]) => void): GameController & { restart: () => void } {
+export function useLocalGame(
+  me: { name: string; avatar: AvatarSpec | null },
+  onGameOver?: (v: GameView, names: string[], log: object) => void,
+): GameController & { restart: () => void } {
   const [id, setId] = useState<number | null>(null);
   const [view, setView] = useState<GameView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +28,7 @@ export function useLocalGame(me: { name: string; avatar: AvatarSpec | null }, on
   useEffect(() => {
     if (view?.phase === 'gameOver' && id !== null && reported.current !== id) {
       reported.current = id;
-      onGameOver?.(view, players.map((p) => p.name));
+      onGameOver?.(view, players.map((p) => p.name), call(`game log id=${id}`));
     }
   });
 

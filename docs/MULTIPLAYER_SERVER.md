@@ -98,3 +98,23 @@ Derselbe Befehl aktualisiert alles.
 | Seite lädt nicht von außen, aber im WLAN (`:8787`) geht es | No-IP-Eintrag (Schritt 3) oder Caddy (Schritt 4) prüfen: `sudo journalctl -u caddy -n 30` |
 | Dienst läuft? | `systemctl status skullki` |
 | Log ansehen | `journalctl -u skullki -n 50` |
+
+## Gespeicherte Daten
+
+| Was | Wo (auf dem Server) |
+|---|---|
+| Profile (Name, Avatar, Statistik) | `~/skullki-gto/server/data/users.json` |
+| Gespielte Partien, anonym (zum Analysieren / KI lernen) | `~/skullki-gto/server/data/games/JJJJ-MM.jsonl` |
+
+Updates (`setup.sh`) lassen den Ordner `data/` in Ruhe. Eine Sicherung auf
+deinen PC holst du dir (in der Windows-Eingabeaufforderung) mit:
+
+```
+scp -r jacob@192.168.178.189:skullki-gto/server/data skullki-daten
+```
+
+Jede Zeile in `games/*.jsonl` ist ein komplettes Spiel: alle ausgeteilten
+Karten, jeder Zug (Mensch oder Bot) und bei Menschen die GTO-Wahrscheinlichkeit
+des Zugs. Spieler stehen dort nur als zufällige Nummer (`p-…`, Gäste `g-…`).
+Wer im Profil „Spiele für die KI speichern“ abschaltet, dessen Spiele werden
+nicht gespeichert.

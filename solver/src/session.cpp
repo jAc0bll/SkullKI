@@ -39,6 +39,11 @@ void legalFor(const GameSession& g, int seat, GameState& at, ActionList& out) {
 
 void dealNext(GameSession& g) {
     dealRound(g.s, g.rng);
+    RoundLog r;
+    r.round = g.s.roundNumber;
+    r.start = g.s.startPlayer;
+    for (int p = 0; p < N_PLAYERS; ++p) g.s.hands[p].forEach([&](Card c) { r.hands[p].push_back(kindOf(c)); });
+    g.log.push_back(std::move(r));
     for (int p = 0; p < N_PLAYERS; ++p) {
         g.pendingBids[p] = -1;
         g.scoresAtRoundStart[p] = g.s.scores[p];
@@ -118,6 +123,34 @@ void trickJson(std::ostringstream& o, const TrickRecord& t) {
         o << (i ? "," : "") << '[' << t.cards[i].first << ',' << int(kindOf(t.cards[i].second)) << ']';
     o << "],\"tigress\":" << (t.tigress < 0 ? "null" : t.tigress ? "\"pirate\"" : "\"escape\"")
       << ",\"winner\":" << t.winner << '}';
+}
+
+// {"v":1,"rounds":[{"round":r,"start":p,"hands":[[kinds]x4],
+//   "actions":[[seat,"card:13",human(0/1),p,"best"]...]}],"scores":[..]}
+std::string logJson(const GameSession& g) {
+    std::ostringstream o;
+    o << "{\"v\":1,\"rounds\":[";
+    for (std::size_t i = 0; i < g.log.size(); ++i) {
+        const RoundLog& r = g.log[i];
+        o << (i ? "," : "") << "{\"round\":" << r.round << ",\"start\":" << r.start << ",\"hands\":[";
+        for (int p = 0; p < N_PLAYERS; ++p) {
+            o << (p ? "," : "") << '[';
+            for (std::size_t k = 0; k < r.hands[p].size(); ++k) o << (k ? "," : "") << r.hands[p][k];
+            o << ']';
+        }
+        o << "],\"actions\":[";
+        for (std::size_t k = 0; k < r.actions.size(); ++k) {
+            const LoggedAction& a = r.actions[k];
+            o << (k ? "," : "") << '[' << a.seat << ",\"" << a.a << "\"," << (a.human ? 1 : 0);
+            if (a.human) o << ',' << a.p << ",\"" << a.best << '"';
+            o << ']';
+        }
+        o << "]}";
+    }
+    o << "],\"scores\":[";
+    for (int p = 0; p < N_PLAYERS; ++p) o << (p ? "," : "") << g.s.scores[p];
+    o << "]}";
+    return o.str();
 }
 
 std::string view(const GameSession& g, int id, int seat) {
@@ -235,6 +268,7 @@ std::string gameCommand(const std::string& text, const std::array<const MLP*, 11
         sessions.erase(it);
         return "{\"ok\":true}";
     }
+    if (cmd == "log") return logJson(g);
     if (cmd == "next") {
         if (!g.roundOver || g.s.phase == Phase::GameEnd) return fail("Runde läuft noch");
         dealNext(g);
@@ -263,6 +297,8 @@ std::string gameCommand(const std::string& text, const std::array<const MLP*, 11
     }
 
     Action a{};
+    LoggedAction entry;
+    entry.seat = seat;
     if (cmd == "bot") {
         if (!net) return fail("net");
         std::uniform_real_distribution<double> u(0.0, 1.0);
@@ -285,10 +321,15 @@ std::string gameCommand(const std::string& text, const std::array<const MLP*, 11
             }
             g.reviews.push_back({seat, at.roundNumber, at.tricksPlayed + 1, actionType(a), actionValue(a),
                                  actionValue(legal[best]), p[chosen], p[best]});
+            entry.p = p[chosen];
+            entry.best = actionText(legal[best]);
         }
+        entry.human = true;
     } else {
         return fail("unbekannter Befehl");
     }
+    entry.a = actionText(a);
+    if (!g.log.empty()) g.log.back().actions.push_back(entry);
     apply(g, seat, a);
     return "{\"ok\":true,\"a\":\"" + actionText(a) + "\"}";
 }

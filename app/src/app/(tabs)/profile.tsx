@@ -1,6 +1,6 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/account/Avatar';
@@ -44,7 +44,8 @@ function SignIn() {
       <Panel style={{ gap: 12 }}>
         <Text style={type.title}>Dein Name</Text>
         <Text style={type.footnote}>
-          Damit meldest du dich an, auch auf anderen Geräten. Ist der Name neu, wird dein Profil angelegt.
+          Damit meldest du dich an, auch auf anderen Geräten. Ist der Name neu, wird dein Profil angelegt. Deine Spiele
+          werden anonym gespeichert, um die KI zu verbessern (abschaltbar im Profil).
         </Text>
         <Glass radius={16} style={styles.inputWrap}>
           <TextInput
@@ -75,7 +76,7 @@ function SignIn() {
 }
 
 function Signed({ user }: { user: User }) {
-  const { setAvatar, logout, refresh } = useAccount();
+  const { setAvatar, logout, refresh, setShareGames } = useAccount();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<AvatarSpec>(user.avatar);
   useFocusEffect(
@@ -139,6 +140,17 @@ function Signed({ user }: { user: User }) {
         </View>
       </Panel>
 
+      <Panel style={{ gap: 8 }}>
+        <View style={styles.switchRow}>
+          <Text style={[type.headline, { flex: 1 }]}>Spiele für die KI speichern</Text>
+          <Switch value={user.shareGames !== false} onValueChange={setShareGames} trackColor={{ true: C.accentDeep }} />
+        </View>
+        <Text style={type.footnote}>
+          Deine Züge werden anonym gespeichert (mit einer zufälligen Nummer, ohne deinen Namen), um später zu lernen, wie
+          Menschen spielen: für bessere Bots und Auswertungen. Ausgeschaltet wird nichts mehr gespeichert.
+        </Text>
+      </Panel>
+
       <Panel>
         <Text style={[type.title, { marginBottom: 8 }]}>Letzte Spiele</Text>
         {user.history.length === 0 && <Text style={type.footnote}>Noch keine Spiele. Ab ins Spiel!</Text>}
@@ -187,6 +199,7 @@ function Leaderboard({ me }: { me?: string }) {
 }
 
 const styles = StyleSheet.create({
+  switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   inputWrap: { paddingHorizontal: 14, height: 48, justifyContent: 'center' },
   input: { fontSize: 17, color: C.text, fontFamily: font.family, outlineStyle: 'none' } as object,
   tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
