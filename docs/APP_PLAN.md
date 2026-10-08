@@ -1,5 +1,12 @@
 # SkullKI-App: Plan
 
+> **Für normale Nutzer: die Website.** Sideloading ist zu umständlich. Dieselbe App
+> läuft im Handy-Browser (https://skullki.schwartihost.com) und lässt sich zum
+> Home-Bildschirm hinzufügen. Der Linux-Server liefert Website und Multiplayer
+> aus (`server/setup.sh`, Anleitung `docs/MULTIPLAYER_SERVER.md`). Die native
+> iPhone-App (`.ipa`) bleibt für dich als Option; für echte Verteilung wäre
+> später TestFlight/App Store (Apple-Entwicklerkonto 99 €/Jahr) der Weg.
+
 Stand 2026-10-08. Eine **native iPhone-App** (React Native / Expo SDK 57) im
 Apple-**Liquid-Glass**-Design. Dieselbe App läuft auch im Browser und später auf
 Android. Die KI rechnet direkt auf dem Gerät: auf dem iPhone als nativ

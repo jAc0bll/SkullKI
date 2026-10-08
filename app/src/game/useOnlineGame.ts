@@ -2,9 +2,15 @@
 // Reconnects by itself and resumes the seat with a saved token.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 import type { GameController, GameView, Player } from './types';
 
-export const DEFAULT_SERVER = 'wss://skullki.schwartihost.com';
+// In the browser the app is served by the game server itself: same address.
+export const sameOrigin =
+  Platform.OS === 'web' && typeof location !== 'undefined' && !/:8081$/.test(location.host)
+    ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
+    : null;
+export const DEFAULT_SERVER = sameOrigin ?? 'wss://skullki.schwartihost.com';
 
 export interface RoomInfo {
   code: string;
@@ -21,7 +27,7 @@ const KEY = { server: 'skullki.server', name: 'skullki.name', token: 'skullki.to
 
 export async function loadPrefs() {
   const [server, name] = await Promise.all([AsyncStorage.getItem(KEY.server), AsyncStorage.getItem(KEY.name)]);
-  return { server: server ?? DEFAULT_SERVER, name: name ?? '' };
+  return { server: sameOrigin ?? server ?? DEFAULT_SERVER, name: name ?? '' };
 }
 
 export function useOnlineGame() {

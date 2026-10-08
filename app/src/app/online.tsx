@@ -4,7 +4,7 @@ import { ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-nati
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GameTable } from '@/game/GameTable';
-import { DEFAULT_SERVER, loadPrefs, useOnlineGame } from '@/game/useOnlineGame';
+import { DEFAULT_SERVER, loadPrefs, sameOrigin, useOnlineGame } from '@/game/useOnlineGame';
 import { Backdrop } from '@/ui/Backdrop';
 import { GlassButton, Icon, Panel } from '@/ui/controls';
 import { Glass } from '@/ui/Glass';
@@ -88,6 +88,7 @@ export default function Online() {
                 <GlassButton label="Beitreten" disabled={!canGo || code.length !== 4} onPress={() => net.join(server, name.trim(), code)} />
               </View>
             </Panel>
+            {!sameOrigin && (
             <Panel style={{ gap: 10 }}>
               <Text style={type.footnote} onPress={() => setShowServer(!showServer)}>
                 Server: {server} {showServer ? '▴' : '▾'}
@@ -98,6 +99,7 @@ export default function Online() {
                 </Glass>
               )}
             </Panel>
+            )}
           </>
         )}
 

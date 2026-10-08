@@ -1,4 +1,5 @@
-// SkullKI multiplayer server.
+// SkullKI multiplayer server. Also serves the web app (app/dist, built with
+// `npx expo export -p web`), so one address gives the app and multiplayer.
 //
 // Rooms with a 4-letter code; up to 4 people, free seats are taken by bots.
 // The server is the only one that knows all cards: it runs the same C++ game
@@ -20,7 +21,7 @@
 //                     {t:"state", view}              (see solver/src/session.cpp)
 //                     {t:"error", msg}
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { randomBytes, randomInt } from 'node:crypto';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
@@ -225,9 +226,29 @@ function handle(ws, msg) {
 }
 
 // ---- server -----------------------------------------------------------------
+const DIST = path.join(here, '..', 'app', 'dist');
+const TYPES = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css',
+  '.json': 'application/json', '.png': 'image/png', '.ico': 'image/x-icon', '.svg': 'image/svg+xml',
+  '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.bin': 'application/octet-stream',
+};
 const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
-  res.end(`SkullKI server ok · ${rooms.size} Räume\n`);
+  const url = new URL(req.url ?? '/', 'http://x');
+  if (url.pathname === '/health' || !existsSync(DIST)) {
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end(`SkullKI server ok · ${rooms.size} Räume\n`);
+    return;
+  }
+  // static web app; unknown paths are app routes -> index.html
+  let file = path.normalize(path.join(DIST, decodeURIComponent(url.pathname)));
+  if (!file.startsWith(DIST) || !existsSync(file) || statSync(file).isDirectory()) file = path.join(DIST, 'index.html');
+  const ext = path.extname(file);
+  const hashed = url.pathname.startsWith('/_expo/') || url.pathname.startsWith('/assets/');
+  res.writeHead(200, {
+    'content-type': TYPES[ext] ?? 'application/octet-stream',
+    'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache',
+  });
+  res.end(readFileSync(file));
 });
 const wss = new WebSocketServer({ server });
 wss.on('connection', (ws) => {
