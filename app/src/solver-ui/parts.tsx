@@ -1,6 +1,6 @@
 // Building blocks of the solver screen: bid advice, seat helpers, hand row,
 // move advice headline, table.
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown, LinearTransition, useAnimatedStyle, withSpring, ZoomIn } from 'react-native-reanimated';
 import { SUITS, cardName, handOrder } from '@/solver/cards';
 import type { Answer, Option, Trick } from '@/solver/engine';
@@ -8,6 +8,7 @@ import { tick } from '@/ui/controls';
 import { Glass } from '@/ui/Glass';
 import { Glyph } from '@/ui/Glyph';
 import { PlayingCard, pctText } from '@/ui/PlayingCard';
+import { PokerTable, TrickPile } from '@/ui/PokerTable';
 import { C, font, type } from '@/ui/theme';
 
 export const POS = ['', 'links', 'gegenüber', 'rechts'];
@@ -116,14 +117,16 @@ export function HandRow({ hand, options, onPlay, size = 'lg' }: { hand: number[]
 const PLACE = ['bottom', 'left', 'top', 'right'] as const;
 
 export function Table({ a }: { a: Answer }) {
+  const { width } = useWindowDimensions();
+  const tableW = Math.min(width - 68, 520); // inside a padded panel
   const tricks = a.tricks ?? [];
   const last: Trick | undefined = tricks[tricks.length - 1];
   const shown = last && (last.winner < 0 || last.cards.length === 4) ? last : undefined;
   const won = a.won ?? [0, 0, 0, 0];
   const bids = a.bids ?? [0, 0, 0, 0];
+  const done = !!shown && shown.winner >= 0;
   return (
-    <View style={styles.table}>
-      <View style={styles.felt} />
+    <PokerTable width={tableW} height={330} style={{ alignSelf: 'center' }}>
       {[0, 1, 2, 3].map((s) => {
         const r = rel(s, a.me);
         const turn = a.phase === 'playing' && a.toAct === s;
@@ -153,36 +156,32 @@ export function Table({ a }: { a: Answer }) {
           </Glass>
         );
       })}
-      <View style={styles.trick} pointerEvents="none">
-        {shown?.cards.map(([seat, kind]) => {
-          const r = rel(seat, a.me);
-          return (
-            <Animated.View
-              key={`${tricks.length}-${seat}`}
-              entering={ZoomIn.springify().damping(16)}
-              style={[styles.trickCard, trickPos[PLACE[r]], shown.winner === seat && styles.winner]}>
-              <PlayingCard kind={kind} size="sm" />
-              {kind === 59 && shown.tigress && <Text style={styles.tig}>{shown.tigress === 'pirate' ? 'Pirat' : 'Flucht'}</Text>}
-            </Animated.View>
-          );
-        })}
-        {!shown && a.phase === 'playing' && <Text style={styles.trickEmpty}>Stich {tricks.length + 1}</Text>}
-      </View>
-    </View>
+      {shown && (
+        <TrickPile
+          key={`${tricks.length}-${shown.leader}`}
+          cards={shown.cards.map(([seat, kind]) => ({
+            kind,
+            rel: rel(seat, a.me),
+            label: kind === 59 && shown.tigress ? (shown.tigress === 'pirate' ? 'als Pirat' : 'als Flucht') : undefined,
+          }))}
+          winner={done ? shown.cards.findIndex(([seat]) => seat === shown.winner) : undefined}
+          caption={done ? (shown.winner === a.me ? 'Dein Stich' : `Stich für ${seatName(shown.winner, a.me)}`) : undefined}
+        />
+      )}
+      {!shown && a.phase === 'playing' && (
+        <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]} pointerEvents="none">
+          <Text style={styles.trickEmpty}>Stich {tricks.length + 1}</Text>
+        </View>
+      )}
+    </PokerTable>
   );
 }
 
 const seatPos = StyleSheet.create({
   bottom: { bottom: 0, alignSelf: 'center' },
   top: { top: 0, alignSelf: 'center' },
-  left: { left: 0, top: '38%' },
-  right: { right: 0, top: '38%' },
-});
-const trickPos = StyleSheet.create({
-  bottom: { bottom: 0, left: 42 },
-  top: { top: 0, left: 42 },
-  left: { left: 0, top: 44 },
-  right: { right: 0, top: 44 },
+  left: { left: 0, top: '42%' },
+  right: { right: 0, top: '42%' },
 });
 
 const styles = StyleSheet.create({
@@ -202,18 +201,6 @@ const styles = StyleSheet.create({
   moveText: { fontSize: 22, fontWeight: '700', color: C.text, letterSpacing: -0.3, fontFamily: font.family },
   movePct: { fontSize: 16, fontWeight: '600', color: C.text2, ...font.tabular },
   hand: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center' },
-  table: { height: 300, marginHorizontal: -4 },
-  felt: {
-    position: 'absolute',
-    left: 20,
-    right: 20,
-    top: 34,
-    bottom: 34,
-    borderRadius: 999,
-    backgroundColor: 'rgba(90,200,250,0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
   seat: { position: 'absolute', minWidth: 88, paddingHorizontal: 12, paddingVertical: 7, alignItems: 'center', zIndex: 1 },
   seatName: { fontSize: 13, fontWeight: '700', color: C.text, fontFamily: font.family },
   seatPos: { fontWeight: '500', color: C.text3, fontSize: 12 },
@@ -221,9 +208,5 @@ const styles = StyleSheet.create({
   voids: { flexDirection: 'row', gap: 4, marginTop: 2 },
   void: { justifyContent: 'center' },
   voidSlash: { position: 'absolute', left: -1, right: -1, height: 1.5, backgroundColor: C.bad, transform: [{ rotate: '-35deg' }] },
-  trick: { position: 'absolute', left: '50%', top: '50%', width: 124, height: 146, marginLeft: -62, marginTop: -73, zIndex: 2 },
-  trickCard: { position: 'absolute', alignItems: 'center' },
-  winner: { shadowColor: C.good, shadowOpacity: 0.9, shadowRadius: 14 },
-  tig: { marginTop: 2, fontSize: 10, fontWeight: '800', color: C.gold, fontFamily: font.family },
-  trickEmpty: { position: 'absolute', top: 60, left: 0, right: 0, textAlign: 'center', fontSize: 15, fontWeight: '600', color: C.text3, fontFamily: font.family },
+  trickEmpty: { textAlign: 'center', fontSize: 15, fontWeight: '600', color: C.text3, fontFamily: font.family },
 });

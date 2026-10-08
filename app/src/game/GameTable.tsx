@@ -1,14 +1,15 @@
 // The game screen shared by bot mode and multiplayer.
 import * as Haptics from 'expo-haptics';
 import { useEffect, useState } from 'react';
-import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, FadeInUp, LinearTransition, ZoomIn } from 'react-native-reanimated';
+import { Platform, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import Animated, { FadeIn, FadeInDown, FadeInUp, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { cardName, handOrder } from '@/solver/cards';
 import { Backdrop } from '@/ui/Backdrop';
 import { GlassButton, Icon, tick } from '@/ui/controls';
 import { Glass, GlassGroup } from '@/ui/Glass';
 import { PlayingCard, pctText } from '@/ui/PlayingCard';
+import { PokerTable, TrickPile } from '@/ui/PokerTable';
 import { C, font, type } from '@/ui/theme';
 import type { GameController, GameTrick, GameView, Player } from './types';
 
@@ -100,12 +101,16 @@ function Scores({ view, players }: { view: GameView; players: Player[] }) {
 }
 
 function GameBoard({ view, players }: { view: GameView; players: Player[] }) {
+  // Fixed size: the table must not jump when the hand or the prompt below changes.
+  const { width, height } = useWindowDimensions();
+  const boardW = Math.min(width - 16, 520);
+  const boardH = Math.round(Math.min(420, Math.max(300, height * 0.42)));
   const rel = (s: number) => (s - view.seat + 4) % 4;
   const trick: GameTrick | null = view.trick.cards.length ? view.trick : view.lastTrick;
-  const finished = trick === view.lastTrick;
+  const finished = !!trick && trick === view.lastTrick && trick.winner >= 0;
+  const name = (s: number) => (s === view.seat ? 'Du' : players[s]?.name ?? `Sitz ${s + 1}`);
   return (
-    <View style={styles.board}>
-      <View style={styles.felt} />
+    <PokerTable width={boardW} height={boardH} style={styles.board}>
       {[0, 1, 2, 3].map((s) => {
         const r = rel(s);
         const turn = (view.phase === 'playing' || view.phase === 'bidding') && view.toAct.includes(s);
@@ -114,7 +119,7 @@ function GameBoard({ view, players }: { view: GameView; players: Player[] }) {
         return (
           <Glass key={s} radius={18} tint={turn ? 'rgba(10,132,255,0.5)' : undefined} style={[styles.seat, seatPos[PLACE[r]], turn && styles.seatTurn]}>
             <Text style={styles.seatName} numberOfLines={1}>
-              {r === 0 ? 'Du' : players[s]?.name ?? `Sitz ${s + 1}`}
+              {name(s)}
               {players[s]?.online === false && <Text style={{ color: C.bad }}> ●</Text>}
             </Text>
             {view.phase === 'bidding' ? (
@@ -129,23 +134,19 @@ function GameBoard({ view, players }: { view: GameView; players: Player[] }) {
           </Glass>
         );
       })}
-      <View style={styles.trick} pointerEvents="none">
-        {trick?.cards.map(([seat, kind]) => (
-          <Animated.View
-            key={`${view.round}-${trick.leader}-${seat}-${kind}`}
-            entering={ZoomIn.springify().damping(15)}
-            style={[styles.trickCard, trickPos[PLACE[rel(seat)]], finished && trick.winner === seat && styles.winner, finished && trick.winner !== seat && { opacity: 0.55 }]}>
-            <PlayingCard kind={kind} size="sm" />
-            {kind === 59 && trick.tigress && <Text style={styles.tig}>{trick.tigress === 'pirate' ? 'Pirat' : 'Flucht'}</Text>}
-          </Animated.View>
-        ))}
-        {finished && trick && trick.winner >= 0 && (
-          <Animated.Text entering={FadeIn.delay(250)} style={styles.trickWinner}>
-            {trick.winner === view.seat ? 'Dein Stich' : `Stich für ${players[trick.winner]?.name ?? ''}`}
-          </Animated.Text>
-        )}
-      </View>
-    </View>
+      {trick && (
+        <TrickPile
+          key={`${view.round}-${trick.leader}-${trick.cards[0]?.[0]}-${trick.cards[0]?.[1]}`}
+          cards={trick.cards.map(([seat, kind]) => ({
+            kind,
+            rel: rel(seat),
+            label: kind === 59 && trick.tigress ? (trick.tigress === 'pirate' ? 'als Pirat' : 'als Flucht') : undefined,
+          }))}
+          winner={finished ? trick.cards.findIndex(([seat]) => seat === trick.winner) : undefined}
+          caption={finished ? (trick.winner === view.seat ? 'Dein Stich' : `Stich für ${name(trick.winner)}`) : undefined}
+        />
+      )}
+    </PokerTable>
   );
 }
 
@@ -312,14 +313,8 @@ function RoundEnd({ view, players, onNext, waiting, onClose }: { view: GameView;
 const seatPos = StyleSheet.create({
   bottom: { bottom: 0, alignSelf: 'center' },
   top: { top: 0, alignSelf: 'center' },
-  left: { left: 0, top: '36%' },
-  right: { right: 0, top: '36%' },
-});
-const trickPos = StyleSheet.create({
-  bottom: { bottom: 0, left: 42 },
-  top: { top: 0, left: 42 },
-  left: { left: 0, top: 44 },
-  right: { right: 0, top: 44 },
+  left: { left: 0, top: '42%' },
+  right: { right: 0, top: '42%' },
 });
 
 const styles = StyleSheet.create({
@@ -328,20 +323,14 @@ const styles = StyleSheet.create({
   scoreBox: { flex: 1, alignItems: 'center', paddingVertical: 6 },
   scoreName: { fontSize: 11, fontWeight: '600', color: C.text2, fontFamily: font.family },
   scoreNum: { fontSize: 17, fontWeight: '800', color: C.text, fontFamily: font.family, ...font.tabular },
-  board: { flex: 1, marginHorizontal: 12, marginTop: 12, minHeight: 260 },
-  felt: { position: 'absolute', left: 24, right: 24, top: 36, bottom: 36, borderRadius: 999, backgroundColor: 'rgba(90,200,250,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+  board: { alignSelf: 'center', marginTop: 8 },
   seat: { position: 'absolute', minWidth: 92, maxWidth: 130, paddingHorizontal: 12, paddingVertical: 7, alignItems: 'center', zIndex: 1 },
   seatTurn: { borderWidth: 1.5, borderColor: C.accent },
   seatName: { fontSize: 13, fontWeight: '700', color: C.text, fontFamily: font.family },
   seatSub: { fontSize: 12, fontWeight: '600', color: C.text2, fontFamily: font.family },
   seatScore: { fontSize: 16, fontWeight: '700', color: C.text, fontFamily: font.family, ...font.tabular },
   startTag: { fontSize: 9.5, fontWeight: '700', color: C.gold, fontFamily: font.family, marginTop: 1 },
-  trick: { position: 'absolute', left: '50%', top: '50%', width: 124, height: 146, marginLeft: -62, marginTop: -73, zIndex: 2 },
-  trickCard: { position: 'absolute', alignItems: 'center' },
-  winner: { shadowColor: C.good, shadowOpacity: 1, shadowRadius: 16 },
-  tig: { marginTop: 2, fontSize: 10, fontWeight: '800', color: C.gold, fontFamily: font.family },
-  trickWinner: { position: 'absolute', left: -40, right: -40, bottom: -26, textAlign: 'center', fontSize: 12, fontWeight: '700', color: C.good, fontFamily: font.family },
-  bottom: { paddingHorizontal: 12, paddingTop: 8 },
+  bottom: { flex: 1, justifyContent: 'flex-end', paddingHorizontal: 12, paddingTop: 8 },
   prompt: { textAlign: 'center', fontSize: 17, fontWeight: '700', color: C.text, fontFamily: font.family },
   bidRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
   hintPct: { fontSize: 11, fontWeight: '700', color: C.text2, fontFamily: font.family, ...font.tabular },
